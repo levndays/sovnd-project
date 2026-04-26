@@ -6,22 +6,34 @@ services:
     privileged: true
     pid: host
     network_mode: host
+    environment:
+      - DB_PATH=/app/data/sovnd.db
+      - TARGET_LABEL=sovnd.monitor=true
     volumes:
-      - /sys/kernel/debug:/sys/kernel/debug
-      - /sys/fs/bpf:/sys/fs/bpf
+      - /sys/kernel/debug:/sys/kernel/debug:rw
+      - /sys/fs/bpf:/sys/fs/bpf:rw
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - sovnd-data:/app/data
-    ports:
-      - "8000:8000"
-      - "8501:8501"
-    restart: unless-stopped
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   web-app:
     image: nginx:latest
     container_name: web-app
+    labels:
+      - "sovnd.monitor=true"
     ports:
       - "8080:80"
-    # Target container for monitoring
+    healthcheck:
+      test: ["CMD", "service", "nginx", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   sovnd-data:
+    driver: local
