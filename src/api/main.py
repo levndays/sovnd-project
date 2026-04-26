@@ -1,4 +1,5 @@
 import logging
+import json
 from typing import List, Dict, Any
 from fastapi import FastAPI, Depends, HTTPException
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
@@ -29,7 +30,13 @@ def get_storage():
 async def get_alerts(limit: int = 50, storage: StorageManager = Depends(get_storage)):
     """Retrieves recent security alerts from persistent storage."""
     try:
-        return storage.get_recent_alerts(limit=limit)
+        alerts = storage.get_recent_alerts(limit=limit)
+        for alert in alerts:
+            if isinstance(alert.get("reasons"), str):
+                alert["reasons"] = json.loads(alert["reasons"])
+            if isinstance(alert.get("container_info"), str):
+                alert["container_info"] = json.loads(alert["container_info"])
+        return alerts
     except Exception as e:
         logger.error("Failed to fetch alerts: %s", e)
         raise HTTPException(status_code=500, detail="Internal database error")

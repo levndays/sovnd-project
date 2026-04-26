@@ -249,7 +249,7 @@ class TestStorageManagerAlerts:
             assert alerts == []
 
     def test_get_recent_alerts_parses_json_reasons(self):
-        """Verify reasons are returned as JSON string (NOT auto-parsed)."""
+        """Verify reasons are automatically parsed from JSON to list."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             manager = StorageManager(db_path=db_path)
@@ -265,10 +265,11 @@ class TestStorageManagerAlerts:
             
             alerts = manager.get_recent_alerts(limit=1)
             
-            assert alerts[0]["reasons"] == '["reason1", "reason2"]'
+            assert isinstance(alerts[0]["reasons"], list), "reasons should be parsed from JSON to list"
+            assert alerts[0]["reasons"] == ["reason1", "reason2"]
 
     def test_get_recent_alerts_parses_json_container_info(self):
-        """Verify container_info is returned as JSON string (NOT auto-parsed)."""
+        """Verify container_info is automatically parsed from JSON."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             manager = StorageManager(db_path=db_path)
@@ -284,7 +285,8 @@ class TestStorageManagerAlerts:
             
             alerts = manager.get_recent_alerts(limit=1)
             
-            assert alerts[0]["container_info"] == '{"id": "abc", "name": "test"}'
+            assert isinstance(alerts[0]["container_info"], dict), "container_info should be parsed from JSON"
+            assert alerts[0]["container_info"] == {"id": "abc", "name": "test"}
 
 
 class TestStorageManagerProfiles:

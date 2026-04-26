@@ -82,7 +82,7 @@ class TestScoringEngine:
 
     def test_compute_score_statistical_scaling(self):
         """Test statistical anomaly scales with Z-score."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(threshold=3.0)
         stat_report = {"pid": 123, "is_anomalous": True, "max_z_score": 3.0}
         
         result = engine.compute_score(

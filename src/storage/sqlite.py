@@ -78,7 +78,13 @@ class StorageManager:
                 "SELECT * FROM alerts ORDER BY timestamp DESC LIMIT ?", (limit,)
             )
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            alerts = []
+            for row in rows:
+                alert = dict(row)
+                alert["reasons"] = json.loads(alert["reasons"]) if alert["reasons"] else []
+                alert["container_info"] = json.loads(alert["container_info"]) if alert["container_info"] else None
+                alerts.append(alert)
+            return alerts
 
     def save_profile(self, identifier: str, mu: bytes, sigma: bytes):
         """Saves or updates a behavioral profile."""
