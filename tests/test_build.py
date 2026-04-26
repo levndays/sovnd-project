@@ -74,3 +74,60 @@ class TestBuildCompilation:
             text=True
         )
         assert result.returncode == 0, f"make clean failed: {result.stderr}"
+
+    def test_loader_c_exists(self):
+        """Verify loader.c source file exists."""
+        loader_c = EBPF_DIR / "loader.c"
+        assert loader_c.exists(), "loader.c not found"
+
+    def test_compile_libloader_so(self):
+        """Test that libloader.so can be compiled."""
+        result = subprocess.run(
+            ["make", "all"],
+            cwd=EBPF_DIR,
+            capture_output=True,
+            text=True
+        )
+        assert result.returncode == 0, f"Compilation failed: {result.stderr}"
+        
+        libloader_so = EBPF_DIR / "libloader.so"
+        assert libloader_so.exists(), "libloader.so was not created"
+
+    def test_libloader_so_size(self):
+        """Test that libloader.so has reasonable size."""
+        libloader_so = EBPF_DIR / "libloader.so"
+        if not libloader_so.exists():
+            subprocess.run(["make", "all"], cwd=EBPF_DIR, check=True)
+        
+        size = libloader_so.stat().st_size
+        assert size > 0, "libloader.so is empty"
+        assert size < 10 * 1024 * 1024, "libloader.so is unreasonably large (>10MB)"
+
+    def test_skeleton_header_generated(self):
+        """Test that tracer.skel.h is generated."""
+        result = subprocess.run(
+            ["make", "all"],
+            cwd=EBPF_DIR,
+            capture_output=True,
+            text=True
+        )
+        assert result.returncode == 0, f"Build failed: {result.stderr}"
+        
+        skel_h = EBPF_DIR / "tracer.skel.h"
+        assert skel_h.exists(), "tracer.skel.h was not generated"
+
+    def test_bpftool_available(self):
+        """Test that bpftool is available."""
+        result = subprocess.run(
+            ["which", "bpftool"],
+            capture_output=True
+        )
+        assert result.returncode == 0, "bpftool not found in PATH"
+
+    def test_libbpf_dev_available(self):
+        """Test that libbpf development headers are available."""
+        result = subprocess.run(
+            ["pkg-config", "--exists", "libbpf"],
+            capture_output=True
+        )
+        assert result.returncode == 0, "libbpf development files not found"
