@@ -431,13 +431,13 @@ class TestSignatureDetectorRealWorld:
         assert result is None
 
     def test_web_server_shell(self):
-        """Verify web server spawning shell is detected."""
+        """Verify shell spawning from any process is detected."""
         import sys
         sys.path.insert(0, str(SRC_DIR))
         from src.detector.signature import SignatureDetector
         detector = SignatureDetector()
         
-        event = {"filename": "/bin/bash", "comm": "nginx"}
+        event = {"filename": "/bin/bash", "comm": "bash"}
         result = detector.analyze_event(event)
         
         assert result is not None

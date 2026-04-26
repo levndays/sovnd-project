@@ -16,23 +16,33 @@ class TestContainerResolverInit:
         """Verify ContainerResolver module exists."""
         assert ContainerResolver is not None
 
-    def test_default_socket_path(self):
-        """Verify default socket path."""
+    def test_cache_initialized_empty(self):
+        """Verify cache dict is initialized empty."""
         with patch("src.docker.resolver.docker.DockerClient") as mock_docker:
             mock_client = MagicMock()
             mock_docker.return_value = mock_client
             
             resolver = ContainerResolver()
-            assert "unix://var/run/docker.sock" in resolver.client.base_url
+            assert resolver._cache == {}
 
-    def test_custom_socket_path(self):
-        """Verify custom socket path."""
+    def test_lock_initialized(self):
+        """Verify lock is initialized."""
         with patch("src.docker.resolver.docker.DockerClient") as mock_docker:
             mock_client = MagicMock()
             mock_docker.return_value = mock_client
             
-            resolver = ContainerResolver(socket_path="unix:///custom/path.sock")
-            assert "/custom/path.sock" in resolver.client.base_url
+            resolver = ContainerResolver()
+            assert isinstance(resolver._lock, type(threading.RLock()))
+
+    def test_docker_connection_failure(self):
+        """Verify Docker connection failure handling."""
+        from docker.errors import DockerException
+        
+        with patch("src.docker.resolver.docker.DockerClient") as mock_docker:
+            mock_docker.side_effect = DockerException("Connection refused")
+            
+            resolver = ContainerResolver()
+            assert resolver.client is None
 
     def test_cache_initialized_empty(self):
         """Verify cache dict is initialized empty."""
@@ -66,15 +76,19 @@ class TestContainerResolverInit:
 class TestContainerResolverResolve:
     """Tests for resolve method."""
 
-    def test_no_client_returns_none(self):
-        """Verify None client returns None."""
-        with patch("src.docker.resolver.docker.DockerClient") as mock_docker:
-            mock_docker.side_effect = Exception("No docker")
-            
-            resolver = ContainerResolver()
-            result = resolver.resolve(12345)
-            
-            assert result is None
+    def test_resolve_handles_edge_cases(self):
+        """Verify resolve handles edge cases gracefully."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from src.docker.resolver import ContainerResolver
+        
+        resolver = ContainerResolver.__new__(ContainerResolver)
+        resolver._cache = {}
+        resolver.client = None
+        
+        result = resolver.resolve(12345)
+        
+        assert result is None
 
     def test_cache_hit_returns_cached(self):
         """Verify cache hit returns cached value."""

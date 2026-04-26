@@ -27,8 +27,11 @@ class SignatureDetector:
         """
         Quickly scans an event for signature matches.
         """
-        filename = event.get("filename", "")
-        comm = event.get("comm", "")
+        filename = event.get("filename") or ""
+        comm = event.get("comm") or ""
+        
+        if not filename:
+            return None
         
         # Check for sensitive path access
         for pattern in self.critical_paths:

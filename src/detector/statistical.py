@@ -23,14 +23,13 @@ class StatisticalDetector:
             A report containing anomaly status and specific scores.
         """
         z_scores = self.engine.get_z_scores(pid, current_metrics)
-        max_z = np.max(np.abs(z_scores))
+        max_z = np.max(np.abs(z_scores)) if z_scores.size > 0 else 0.0
         
-        is_anomalous = max_z > self.threshold_z
+        is_anomalous = max_z > self.threshold_z if self.threshold_z > 0 else False
         
-        # Calculate Euclidean distance to centroid as a secondary metric
         prof = self.engine.profiles.get(pid)
         distance = 0.0
-        if prof is not None:
+        if prof is not None and current_metrics.size > 0:
             distance = np.linalg.norm(current_metrics - prof["mu"])
 
         return {
@@ -45,7 +44,9 @@ class StatisticalDetector:
     def _map_to_severity(self, z_score: float) -> str:
         if z_score < self.threshold_z:
             return "info"
-        elif z_score < self.threshold_z * 2:
+        elif z_score >= self.threshold_z * 2:
+            return "critical"
+        elif z_score >= self.threshold_z:
             return "warning"
         else:
-            return "critical"
+            return "info"

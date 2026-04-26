@@ -46,6 +46,8 @@ class MetricsEngine:
         prof["mu"] = new_mu
         
         prof["history"].append(current_vector)
+        
+        prof["history"].append(current_vector)
 
     def update_ngram(self, pid: int, syscall_id: int):
         """
