@@ -2,28 +2,38 @@
 
 ## Project Overview
 
-**SovND** is an eBPF-based system monitoring and anomaly detection platform that traces syscalls at the kernel level and detects suspicious activity using signature matching, statistical analysis, and provenance graph heuristics.
+**SovND** (Security of Virtualized Network Devices) is a high-performance, eBPF-powered security monitoring platform. It implements a hybrid detection model combining real-time syscall tracing, statistical anomaly detection (Z-score/EWMA), signature-based IOC matching, and provenance graph analysis.
 
-## Architecture
+## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                            Python User Space                                │
+│                            User Space (Python 3.12)                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  ebpf_agent.py   │  scoring/   │  graph/    │  detector/  │ metrics/ │ docker/│
-│  (ctypes bridge) │ (Phase 5)   │ (Phase 5)  │  (Phase 4)  │ (Phase 4)│ (Phase 4)│
-└──────────────┬───────────┼────────────┼─────────────┼──────────┼────────────┘
-              │           │            │             │          │
-              ▼           ▼            ▼             ▼          ▼
-        ┌─────────────────────────────────────────────────────────┐
-        │                 C Userspace Loader                      │
-        │               (ebpf/loader.c shared lib)                │
-        └──────────────────────────┬──────────────────────────────┘
-                                   │ ctypes/CDLL
-                                   ▼
-        ┌─────────────────────────────────────────────────────────┐
-        │                 eBPF Kernel Programs                    │
-        │          (tracer.bpf.c, filter.bpf.c, etc.)             │
+│  Dashboard    │      API      │    Scoring    │    Graph    │   Detectors   │
+│ (Streamlit)   │   (FastAPI)   │    Engine     │   Builder   │ (Stat/Sig)    │
+└───────┬───────┴───────┬───────┴───────┬───────┴───────┬─────┴───────┬───────┘
+        │               │               │               │             │
+        │       ┌───────▼───────────────▼───────────────▼─────────────▼────┐
+        │       │             Persistence Layer (SQLite 3)                 │
+        │       └───────────────────────┬──────────────────────────────────┘
+        │                               │
+        └───────────────────────────────┼──────────────────────────────────┐
+                                        ▼                                  │
+        ┌─────────────────────────────────────────────────────────┐        │
+        │                 eBPF Loader & Bridge                    │        │
+        │            (loader.c shared lib via ctypes)             │        │
+        └──────────────────────────┬──────────────────────────────┘        │
+                                   │                                       │
+        ┌──────────────────────────▼──────────────────────────────┐        │
+        │                 Kernel Space (eBPF)                     │        │
+        │      (Tracepoints, Ring Buffers, Shared Maps)           │        │
+        └─────────────────────────────────────────────────────────┘        │
+                                   │                                       │
+                                   ▼                                       │
+        ┌─────────────────────────────────────────────────────────┐        │
+        │                Target Docker Containers                 │◄───────┘
+        │            (Traced via cgroup_id & PID)                 │
         └─────────────────────────────────────────────────────────┘
 ```
 
@@ -32,132 +42,96 @@
 ```
 sovnd-project/
 ├── src/
-│   ├── ebpf_agent.py          # Python ctypes bridge to C library
+│   ├── api/
+│   │   └── main.py          # FastAPI REST Interface & Prometheus Metrics
+│   ├── dashboard/
+│   │   └── app.py           # Streamlit UI (Plotly, Agraph)
+│   ├── storage/
+│   │   └── sqlite.py        # Persistence for Alerts & Profiles
 │   ├── scoring/
-│   │   └── engine.py        # Final suspicion score calculation (S >= T)
+│   │   └── engine.py        # Final Decision Logic (S >= T)
 │   ├── graph/
-│   │   └── builder.py       # Provenance Graph (NetworkX)
+│   │   └── builder.py       # Provenance Graph Constructor (NetworkX)
 │   ├── detector/
-│   │   ├── signature.py     # IOC-based pattern matching
-│   │   └── statistical.py   # Z-score anomaly detection
+│   │   ├── signature.py     # Regex/IOC Pattern Matcher
+│   │   └── statistical.py   # Z-score Anomaly Detection
 │   ├── metrics/
-│   │   └── engine.py        # EWMA + n-gram tracking
-│   └── docker/
-│       └── resolver.py      # Container metadata resolver
+│   │   └── engine.py        # EWMA & n-gram Profile Engine
+│   ├── docker/
+│   │   └── resolver.py      # cgroup_id to Container Metadata Resolver
+│   └── ebpf_agent.py        # Core Python Bridge (ctypes)
 │
 ├── ebpf/
-│   ├── loader.c             # libbpf loader (shared library)
-│   ├── tracer.bpf.c         # Syscall tracepoint programs
-│   ├── filter.bpf.c         # Filtering logic
-│   ├── fd_tracker.bpf.c     # File descriptor tracking
-│   ├── maps.bpf.h           # BPF map definitions
-│   ├── vmlinux.h            # Kernel CO-RE headers
-│   └── Makefile             # Build system
+│   ├── tracer.bpf.c         # Core eBPF tracing logic
+│   ├── loader.c             # C-side libbpf loader
+│   ├── Makefile             # CO-RE Build system
+│   └── vmlinux.h            # Kernel types for CO-RE
 │
-├── tests/                  # Automated test suite
-├── deploy/                 # Deployment configs
-└── data/                   # Runtime data (SQLite, logs)
+├── tests/                  # Pytest suite
+├── deploy/                 # Docker/Compose deployment files
+└── data/                   # SQLite database (sovnd.db)
 ```
 
-## Phase History
+## Core Modules Documentation
 
-| Phase | Commit | Description |
-|-------|--------|------------|
-| 1 | ba57fbf | Project initialization and skeleton |
-| 2 | 48eeebc | Verified compilation and ignored object files |
-| 3 | 4cf53f4 | Create Python eBPF agent bridge |
-| 4 | 0e26ef4 | SignatureDetector + StatisticalDetector + MetricsEngine + ContainerResolver |
-| 5 | 5d9f14a | ProvenanceGraphBuilder + ScoringEngine (S = sum(w_i * d_i) * P_ctx) |
+### 1. Dashboard (src/dashboard/app.py)
+**Purpose**: High-fidelity visual interface for security analysts.
+- **Real-time Monitoring**: Plotly charts for alert severity distribution.
+- **Incident Management**: Dataframes for historical alert review.
+- **Graph Visualization**: Interactive `streamlit-agraph` implementation of the provenance graph.
 
----
+### 2. API & Metrics (src/api/main.py)
+**Purpose**: External data access and observability.
+- **REST Endpoints**: `/api/alerts`, `/api/status`.
+- **Prometheus**: `/metrics` endpoint for scraping syscall counts and alert rates.
 
-## Module Documentation
+### 3. Scoring Engine (src/scoring/engine.py)
+**Purpose**: Multi-signal fusion to minimize False Positives.
+- **Algorithm**: $ S = \sum (w_i \cdot d_i) \cdot P_{ctx} $
+- **Severity Classification**: Automatic mapping from suspicion score to Alert object.
 
-### 1. src/graph/builder.py (Phase 5)
+### 4. Storage Manager (src/storage/sqlite.py)
+**Purpose**: Thread-safe persistence.
+- **Schema**: Tables for `profiles` (blob mu/sigma) and `alerts` (json reasons).
+- **Concurrency**: Uses `threading.Lock` and context-managed connections.
 
-**Purpose**: Constructs a directed provenance graph for structural analysis.
-
-**Key Features**:
-- Uses **NetworkX** for graph representation.
-- Nodes represent **Processes** and **Resources** (Files, Sockets).
-- Edges represent **Actions** (open, read, write) with metadata.
-
-**Methods**:
-- `add_event(event)`: Updates the graph with new eBPF data.
-- `get_process_subgraph(pid)`: Extracts the interaction neighborhood of a process.
-- `get_serialized_graph()`: Exports graph in JSON format for UI visualization.
-
----
-
-### 2. src/scoring/engine.py (Phase 5)
-
-**Purpose**: Final decision engine that aggregates multiple detection signals.
-
-**Formula**: 
-33655 S = \sum (w_i \cdot d_i) \cdot P_{ctx} 33655
-
-**Weights**:
-- Signature Match: 15.0 (High Priority)
-- Statistical Anomaly: 1.0 (Scaled by Z-score)
-- Graph Heuristics: 5.0 (Structural triggers)
-
-**Threshold**: $ T = 10.0 $ (Adjustable)
-
-**Alert Structure**:
-```python
-@dataclass
-class Alert:
-    timestamp: str
-    pid: int
-    score: float
-    severity: str  # info | warning | critical
-    reasons: List[str]
-    container_info: Optional[Dict]
-```
+### 5. eBPF Tracer (ebpf/tracer.bpf.c)
+**Purpose**: Low-overhead kernel-level instrumentation.
+- **Events**: Intercepts `openat`, `close`, etc.
+- **Data Transfer**: Uses high-performance `BPF_MAP_TYPE_RINGBUF`.
 
 ---
 
-### 3. src/ebpf_agent.py (Phase 3)
+## Technical Specifications
 
-**Purpose**: Python ctypes bridge to kernel eBPF events
+| Component | Technology |
+|-----------|------------|
+| Kernel Tracing | eBPF (CO-RE) |
+| Binary Interface | libbpf / C / ctypes |
+| Data Analysis | NumPy / NetworkX |
+| Web Framework | FastAPI |
+| Dashboard | Streamlit |
+| Database | SQLite 3 |
+| Serialization | JSON / Pickle |
 
-**Key Classes**:
-- `Event`: ctypes Structure matching BPF event.
-- `EBPFAgent`: Manages loader lifecycle and event polling thread.
+## Build and Execution
 
----
-
-### 4. src/detector/signature.py (Phase 4)
-
-**Purpose**: Fast IOC-based detection using regex and pattern matching.
-**Triggers**: /etc/shadow, /var/run/docker.sock, unauthorized shells.
-
----
-
-### 5. src/detector/statistical.py (Phase 4)
-
-**Purpose**: Evaluates Z-scores for scalar metrics (churn rate, FD count).
-
----
-
-### 6. src/metrics/engine.py (Phase 4)
-
-**Purpose**: EWMA-based metric tracking and n-gram frequency profiling.
-
----
-
-### 7. src/docker/resolver.py (Phase 4)
-
-**Purpose**: Maps cgroup_id to Docker container metadata with RLock-protected cache.
-
----
-
-## Build & Test
-
+### Build Artifacts
 ```bash
-# Build eBPF and Shared Lib
 cd ebpf && make
+# Produces: tracer.bpf.o, tracer.skel.h, libloader.so
+```
 
-# Run Tests
+### Run System
+```bash
+# Start API
+./venv/bin/uvicorn src.api.main:app --port 8000
+
+# Start Dashboard
+./venv/bin/streamlit run src/dashboard/app.py
+```
+
+### Verification
+```bash
 ./venv/bin/pytest tests/
 ```
