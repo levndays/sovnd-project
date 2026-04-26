@@ -1,0 +1,27 @@
+services:
+  sovnd-monitor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    privileged: true
+    pid: host
+    network_mode: host
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - sovnd-data:/app/data
+    ports:
+      - "8000:8000"
+      - "8501:8501"
+    restart: unless-stopped
+
+  web-app:
+    image: nginx:latest
+    container_name: web-app
+    ports:
+      - "8080:80"
+    # Target container for monitoring
+
+volumes:
+  sovnd-data:
