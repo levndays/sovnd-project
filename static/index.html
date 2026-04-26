@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SovND | Command Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .glow-green { box-shadow: 0 0 15px rgba(34, 197, 94, 0.5); border: 1px solid #22c55e; }
+        .glow-red { box-shadow: 0 0 20px rgba(239, 68, 68, 0.7); border: 2px solid #ef4444; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        body { background: #0f172a; color: #f8fafc; font-family: 'Courier New', monospace; }
+    </style>
+</head>
+<body class="p-8">
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 id="status-text" class="text-3xl font-bold text-green-500">SYSTEM SECURE</h1>
+            <p class="text-slate-400">eBPF Kernel Monitoring Active</p>
+        </div>
+        <button onclick="launchAttack()" class="bg-red-900 hover:bg-red-700 text-white font-bold py-3 px-6 rounded border border-red-500 transition-all">
+            💥 TRIGGER EXPLOIT DEMO
+        </button>
+    </div>
+
+    <div class="grid grid-cols-3 gap-6">
+        <div class="col-span-2 bg-slate-900 p-4 rounded-lg border border-slate-700">
+            <h3 class="text-slate-400 mb-4">KERNEL EVENT THROUGHPUT</h3>
+            <canvas id="throughputChart" height="100"></canvas>
+        </div>
+
+        <div class="bg-slate-900 p-4 rounded-lg border border-slate-700">
+            <h3 class="text-slate-400 mb-4">LIVE PROCESS STACK</h3>
+            <div id="process-list" class="space-y-2"></div>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('throughputChart').getContext('2d');
+        let isAttacked = false;
+        
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(30).fill(''),
+                datasets: [{
+                    label: 'Syscalls/Sec',
+                    data: Array(30).fill(0),
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                scales: { y: { beginAtZero: true, grid: { color: '#334155' } } },
+                animation: false
+            }
+        });
+
+        const ws = new WebSocket(`ws://${window.location.host}/ws/telemetry`);
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            chart.data.datasets[0].data.push(data.eps);
+            chart.data.datasets[0].data.shift();
+            
+            if (data.alerts.length > 0) {
+                isAttacked = true;
+                document.getElementById('status-text').innerText = "⚠️ THREAT DETECTED";
+                document.getElementById('status-text').className = "text-3xl font-bold text-red-500";
+                chart.data.datasets[0].borderColor = '#ef4444';
+                chart.data.datasets[0].backgroundColor = 'rgba(239, 68, 68, 0.2)';
+            }
+            chart.update();
+
+            const list = document.getElementById('process-list');
+            list.innerHTML = '';
+            
+            data.alerts.slice(0, 5).forEach(alert => {
+                list.innerHTML += `
+                    <div class="p-3 rounded glow-red bg-red-950/30">
+                        <div class="text-xs text-red-400 font-bold">ALERT: ${alert.pid}</div>
+                        <div class="text-sm">${alert.reasons[0]}</div>
+                    </div>`;
+            });
+
+            if (data.alerts.length < 5) {
+                const healthy = ["systemd", "kworker", "sshd", "containerd", "python3"];
+                healthy.slice(0, 5 - data.alerts.length).forEach(name => {
+                    list.innerHTML += `
+                        <div class="p-3 rounded border border-slate-700 bg-slate-800/50 opacity-50">
+                            <div class="text-xs text-green-500">STABLE</div>
+                            <div class="text-sm">${name}</div>
+                        </div>`;
+                });
+            }
+        };
+
+        function launchAttack() {
+            fetch('/api/attack', {method: 'POST'});
+        }
+    </script>
+</body>
+</html>
