@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+import subprocess
+import webbrowser
+import time
+import sys
+import os
+
+def start():
+    print("🚀 Initializing SovND Security Environment...")
+    
+    backend = subprocess.Popen([sys.executable, "-m", "uvicorn", "src.api.main:app", "--port", "8000"])
+    
+    time.sleep(2)
+    
+    print("🌍 Opening Command Center at http://localhost:8000")
+    webbrowser.open("http://localhost:8000")
+    
+    try:
+        backend.wait()
+    except KeyboardInterrupt:
+        backend.terminate()
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "start":
+        start()
+    else:
+        print("Usage: python3 demo start")
