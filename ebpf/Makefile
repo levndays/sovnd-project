@@ -11,7 +11,7 @@ tracer.bpf.o: tracer.bpf.c maps.bpf.h vmlinux.h
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
 tracer.skel.h: tracer.bpf.o
-	bpftool skeleton gen $< > $@
+	bpftool gen skeleton $< > $@
 
 libloader.so: loader.c tracer.skel.h
 	$(CLANG) -g -O2 -Wall -fPIC -shared loader.c -lbpf -lelf -lz -o $@
