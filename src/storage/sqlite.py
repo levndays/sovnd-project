@@ -31,6 +31,7 @@ class StorageManager:
 
     def _init_db(self):
         """Initializes the database schema."""
+        os.makedirs(os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else "data", exist_ok=True)
         with self._get_connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS profiles (
@@ -46,31 +47,41 @@ class StorageManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TIMESTAMP,
                     pid INTEGER,
+                    comm TEXT,
                     score REAL,
                     severity TEXT,
                     reasons TEXT,       -- JSON string
-                    container_info TEXT -- JSON string
+                    breakdown TEXT     -- JSON string
                 )
             """)
             conn.commit()
-            logger.info("Database initialized at %s", self.db_path)
+        try:
+            os.chmod(self.db_path, 0o644)
+        except PermissionError:
+            pass
+        logger.info("Database initialized at %s", self.db_path)
 
     def save_alert(self, alert_data: Dict[str, Any]):
         """Persists a generated alert."""
         with self._lock:
             with self._get_connection() as conn:
                 conn.execute(
-                    "INSERT INTO alerts (timestamp, pid, score, severity, reasons, container_info) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO alerts (timestamp, pid, comm, score, severity, reasons, breakdown) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         alert_data.get("timestamp"),
                         alert_data.get("pid"),
+                        alert_data.get("comm", "unknown"),
                         alert_data.get("score"),
                         alert_data.get("severity"),
                         json.dumps(alert_data.get("reasons")),
-                        json.dumps(alert_data.get("container_info"))
+                        json.dumps(alert_data.get("breakdown", {}))
                     )
                 )
                 conn.commit()
+        try:
+            os.chmod(self.db_path, 0o644)
+        except PermissionError:
+            pass
 
     def get_recent_alerts(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Retrieves most recent security alerts."""
@@ -83,7 +94,7 @@ class StorageManager:
             for row in rows:
                 alert = dict(row)
                 alert["reasons"] = json.loads(alert["reasons"]) if alert["reasons"] else []
-                alert["container_info"] = json.loads(alert["container_info"]) if alert["container_info"] else None
+                alert["breakdown"] = json.loads(alert["breakdown"]) if alert["breakdown"] else {}
                 alerts.append(alert)
             return alerts
 
@@ -109,3 +120,15 @@ class StorageManager:
             )
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def clear_alerts(self):
+        """Clears all alerts from the database."""
+        with self._lock:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM alerts")
+                conn.commit()
+        try:
+            os.chmod(self.db_path, 0o644)
+        except PermissionError:
+            pass
+        logger.info("All alerts cleared")

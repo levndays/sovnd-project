@@ -1,105 +1,97 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>SovND | Command Center</title>
+    <title>SovND | Security Analytics</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        .glow-green { box-shadow: 0 0 15px rgba(34, 197, 94, 0.5); border: 1px solid #22c55e; }
-        .glow-red { box-shadow: 0 0 20px rgba(239, 68, 68, 0.7); border: 2px solid #ef4444; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-        body { background: #0f172a; color: #f8fafc; font-family: 'Courier New', monospace; }
+        body { background: #0f172a; color: #f1f5f9; font-family: sans-serif; }
+        .card-malicious { border: 1px solid #ef4444; background: rgba(127, 29, 29, 0.1); }
+        .score-pill { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); }
     </style>
 </head>
 <body class="p-8">
-    <div class="flex justify-between items-center mb-8">
-        <div>
-            <h1 id="status-text" class="text-3xl font-bold text-green-500">SYSTEM SECURE</h1>
-            <p class="text-slate-400">eBPF Kernel Monitoring Active</p>
-        </div>
-        <button onclick="launchAttack()" class="bg-red-900 hover:bg-red-700 text-white font-bold py-3 px-6 rounded border border-red-500 transition-all">
-            💥 TRIGGER EXPLOIT DEMO
-        </button>
-    </div>
-
-    <div class="grid grid-cols-3 gap-6">
-        <div class="col-span-2 bg-slate-900 p-4 rounded-lg border border-slate-700">
-            <h3 class="text-slate-400 mb-4">KERNEL EVENT THROUGHPUT</h3>
-            <canvas id="throughputChart" height="100"></canvas>
+    <div class="max-w-7xl mx-auto">
+        <div class="flex justify-between items-center mb-10 border-b border-slate-800 pb-6">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight">SOVND COMMAND CENTER</h1>
+                <p class="text-slate-400 text-sm">Kernel-Level Telemetry & Explainable Scoring</p>
+            </div>
+            <button onclick="fireAttack()" class="bg-slate-800 hover:bg-red-600 text-white text-sm font-bold py-2 px-6 rounded-md border border-slate-700 transition-all">
+                SIMULATE MULTI-STAGE ATTACK
+            </button>
         </div>
 
-        <div class="bg-slate-900 p-4 rounded-lg border border-slate-700">
-            <h3 class="text-slate-400 mb-4">LIVE PROCESS STACK</h3>
-            <div id="process-list" class="space-y-2"></div>
+        <div class="grid grid-cols-12 gap-8">
+            <div class="col-span-8">
+                <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-4">Throughput (Syscalls/sec)</h3>
+                    <canvas id="chart" height="100"></canvas>
+                </div>
+            </div>
+            <div class="col-span-4 space-y-4">
+                <h3 class="text-xs font-bold text-slate-500 uppercase">Active Threat Stack</h3>
+                <div id="alert-list" class="space-y-3">
+                    <div class="text-center py-10 border border-dashed border-slate-800 rounded-xl text-slate-600 text-sm">Monitoring kernel space...</div>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
-        const ctx = document.getElementById('throughputChart').getContext('2d');
-        let isAttacked = false;
-        
+        const sessionStartTime = new Date().getTime();
+        console.log("Session started at:", sessionStartTime);
+        const ctx = document.getElementById('chart').getContext('2d');
         const chart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: Array(30).fill(''),
+                labels: Array(40).fill(''),
                 datasets: [{
-                    label: 'Syscalls/Sec',
-                    data: Array(30).fill(0),
-                    borderColor: '#22c55e',
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    data: Array(40).fill(0),
+                    borderColor: '#3b82f6',
+                    borderWidth: 2,
+                    pointRadius: 0,
                     fill: true,
-                    tension: 0.4
+                    backgroundColor: 'rgba(59, 130, 246, 0.05)',
+                    tension: 0.3
                 }]
             },
-            options: {
-                scales: { y: { beginAtZero: true, grid: { color: '#334155' } } },
-                animation: false
-            }
+            options: { scales: { y: { display: false }, x: { display: false } }, plugins: { legend: { display: false } }, animation: false }
         });
 
         const ws = new WebSocket(`ws://${window.location.host}/ws/telemetry`);
-        
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            
             chart.data.datasets[0].data.push(data.eps);
             chart.data.datasets[0].data.shift();
-            
-            if (data.alerts.length > 0) {
-                isAttacked = true;
-                document.getElementById('status-text').innerText = "⚠️ THREAT DETECTED";
-                document.getElementById('status-text').className = "text-3xl font-bold text-red-500";
-                chart.data.datasets[0].borderColor = '#ef4444';
-                chart.data.datasets[0].backgroundColor = 'rgba(239, 68, 68, 0.2)';
-            }
             chart.update();
 
-            const list = document.getElementById('process-list');
-            list.innerHTML = '';
-            
-            data.alerts.slice(0, 5).forEach(alert => {
-                list.innerHTML += `
-                    <div class="p-3 rounded glow-red bg-red-950/30">
-                        <div class="text-xs text-red-400 font-bold">ALERT: ${alert.pid}</div>
-                        <div class="text-sm">${alert.reasons[0]}</div>
-                    </div>`;
+            const liveAlerts = data.alerts.filter(a => {
+                const alertTime = new Date(a.timestamp).getTime();
+                return alertTime > (sessionStartTime - 10000);
             });
 
-            if (data.alerts.length < 5) {
-                const healthy = ["systemd", "kworker", "sshd", "containerd", "python3"];
-                healthy.slice(0, 5 - data.alerts.length).forEach(name => {
-                    list.innerHTML += `
-                        <div class="p-3 rounded border border-slate-700 bg-slate-800/50 opacity-50">
-                            <div class="text-xs text-green-500">STABLE</div>
-                            <div class="text-sm">${name}</div>
-                        </div>`;
-                });
+            if (liveAlerts.length > 0) {
+                document.getElementById('alert-list').innerHTML = liveAlerts.map(a => `
+                    <div class="p-4 rounded-lg card-malicious transition-all">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="font-bold text-red-400 text-sm">PID ${a.pid} [${a.comm || 'unknown'}]</span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-black bg-red-600 text-white">SCORE ${a.score}</span>
+                        </div>
+                        <div class="text-xs text-slate-300 mb-3">${a.reasons[0]}</div>
+                        <div class="grid grid-cols-3 gap-1 text-[8px] uppercase font-bold text-slate-500">
+                            <div class="score-pill p-1 rounded text-center">SIG: ${a.breakdown?.signature || 0}</div>
+                            <div class="score-pill p-1 rounded text-center">STAT: ${a.breakdown?.statistical?.toFixed(1) || 0}</div>
+                            <div class="score-pill p-1 rounded text-center">GRPH: ${a.breakdown?.graph || 0}</div>
+                        </div>
+                    </div>
+                `).join('');
             }
         };
 
-        function launchAttack() {
-            fetch('/api/attack', {method: 'POST'});
+        function fireAttack() {
+            console.log("Launching attack...");
+            fetch('/api/attack', { method: 'POST' });
         }
     </script>
 </body>

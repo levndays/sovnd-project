@@ -31,12 +31,11 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx) {
     e->syscall_id = 257; // openat
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
     
-    // In a real implementation, we would use bpf_probe_read_user_str
-    // to read the filename from ctx->args[1]
+    const char *pathname = (const char *)ctx->args[1];
+    bpf_probe_read_user_str(&e->filename, sizeof(e->filename), pathname);
     
     bpf_ringbuf_submit(e, 0);
 
-    // Update metrics
     __u64 *count, one = 1;
     count = bpf_map_lookup_elem(&proc_metrics, &pid);
     if (count) {

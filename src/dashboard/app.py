@@ -1,137 +1,240 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from streamlit_agraph import agraph, Node, Edge, Config
 import json
-from datetime import datetime
+import os
 import time
+import subprocess
+from datetime import datetime
+import sys
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.storage.sqlite import StorageManager
 
-# Page Configuration
+# Get project root (parent of src/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT.endswith('/src'):
+    PROJECT_ROOT = os.path.dirname(PROJECT_ROOT)
+HEARTBEAT_FILE = os.path.join(PROJECT_ROOT, "data", "heartbeat.json")
+
+# ----------------- PAGE CONFIG -----------------
 st.set_page_config(
-    page_title="SovND | Security Intelligence",
+    page_title="SovND | Command Center",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS for modern look
+# Force Dark Mode CSS & Custom Styling
 st.markdown("""
     <style>
-    .main {
-        background-color: #f5f7f9;
+    .stApp { background-color: #0e1117; color: #fafafa; }
+    .metric-card { 
+        background-color: #1e293b; padding: 20px; border-radius: 8px; 
+        border-left: 5px solid #3b82f6; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
-    .stMetric {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    .alert-critical { 
+        background-color: #450a0a; border-left: 5px solid #ef4444; 
+        padding: 15px; border-radius: 5px; margin-bottom: 10px;
     }
-    .status-card {
-        padding: 20px;
-        border-radius: 10px;
-        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
-        color: white;
+    .stButton>button { width: 100%; font-weight: bold; }
+    .attack-btn>button { background-color: #7f1d1d !important; color: white !important; border: 1px solid #ef4444 !important; }
+    
+    /* Attack flash animation */
+    @keyframes flash-red {
+        0% { box-shadow: inset 0 0 0 0 rgba(239, 68, 68, 0); }
+        50% { box-shadow: inset 0 0 100px 50px rgba(239, 68, 68, 0.5); }
+        100% { box-shadow: inset 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+    .attack-flash {
+        animation: flash-red 1s ease-out;
     }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# Initialize Storage
+# ----------------- STATE & DATA -----------------
 storage = StorageManager()
 
-def load_data():
-    alerts = storage.get_recent_alerts(limit=100)
-    return pd.DataFrame(alerts)
+if 'syscall_history' not in st.session_state:
+    st.session_state.syscall_history =[]
+if 'live_monitor' not in st.session_state:
+    st.session_state.live_monitor = True
+if 'attack_events' not in st.session_state:
+    st.session_state.attack_events = []
+if 'last_alert_count' not in st.session_state:
+    st.session_state.last_alert_count = 0
+if 'flash_screen' not in st.session_state:
+    st.session_state.flash_screen = False
 
-# Sidebar
+# Use PROJECT_ROOT which is correctly calculated above
+
+def load_heartbeat():
+    try:
+        with open(HEARTBEAT_FILE, "r") as f:
+            data = json.load(f)
+            return data.get("events_per_sec", 0)
+    except:
+        return 0
+
+def launch_real_attack():
+    """Executes the actual attacks directly from Python, no external scripts needed."""
+    try:
+        # 1. Trigger /etc/shadow read alert (Signature Match)
+        subprocess.run(["cat", "/etc/shadow"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # 2. Trigger Docker sock access alert (Signature Match)
+        subprocess.run(["cat", "/var/run/docker.sock"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # 3. Trigger suspicious shell (Heuristic)
+        subprocess.run(["bash", "-c", "echo 'stealth shell'"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Mark attack time for graph highlighting
+        st.session_state.attack_events.append(datetime.now())
+        # Clean up old attack markers (older than 60 seconds)
+        st.session_state.attack_events = [
+            t for t in st.session_state.attack_events 
+            if (datetime.now() - t).total_seconds() < 60
+        ]
+        
+        return True
+    except Exception as e:
+        st.error(f"Failed to launch attack: {e}")
+        return False
+
+# ----------------- SIDEBAR -----------------
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/shield.png", width=80)
+    st.image("https://img.icons8.com/fluency/96/shield.png", width=60)
     st.title("SovND Control")
     st.markdown("---")
     
-    threshold = st.slider("Anomaly Threshold (T)", 1.0, 50.0, 10.0)
-    refresh_rate = st.selectbox("Refresh Rate", [5, 10, 30, 60], index=0)
+    st.session_state.live_monitor = st.toggle("🔴 Live Auto-Refresh", value=st.session_state.live_monitor)
     
     st.markdown("---")
-    st.info("eBPF Monitor: **Active**")
-    st.info("Kernel Version: **Linux 6.x**")
+    st.markdown("### ⚠️ Live Demo Actions")
+    st.caption("These buttons execute REAL scripts on the host machine.")
+    
+    # Wrap button in custom class for red styling
+    st.markdown('<div class="attack-btn">', unsafe_allow_html=True)
+    if st.button("💥 LAUNCH REAL ATTACK", use_container_width=True):
+        launch_real_attack()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# Header
-st.title("🛡️ SovND Security Dashboard")
-st.caption("Real-time eBPF System Monitoring & Anomaly Detection")
+# ----------------- MAIN DASHBOARD -----------------
+st.title("🛡️ SovND Security Command Center")
+st.caption("Live eBPF Kernel Telemetry & Threat Detection")
 
-# Main Tabs
-tab_dash, tab_alerts, tab_graph = st.tabs(["📊 Dashboard", "🚨 Security Alerts", "🕸️ Provenance Graph"])
+# Apply flash effect if new alerts
+if st.session_state.flash_screen:
+    st.markdown("""
+        <div class="attack-flash" style="position:fixed; top:0; left:0; right:0; bottom:0; pointer-events:none; z-index:9999;"></div>
+    """, unsafe_allow_html=True)
+    st.session_state.flash_screen = False
 
-df_alerts = load_data()
+# 1. Fetch live data
+alerts_data = storage.get_recent_alerts(limit=50)
+df_alerts = pd.DataFrame(alerts_data) if alerts_data else pd.DataFrame()
+total_alerts = len(df_alerts)
 
-with tab_dash:
-    # Top Metrics
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric("Total Alerts", len(df_alerts))
-    with m2:
-        critical_count = len(df_alerts[df_alerts['severity'] == 'critical']) if not df_alerts.empty else 0
-        st.metric("Critical Threats", critical_count, delta_color="inverse")
-    with m3:
-        st.metric("Monitored Containers", 5) # Placeholder
-    with m4:
-        st.metric("Kernel Events/sec", "1.2k") # Placeholder
+# Trigger flash if new alerts appeared
+if total_alerts > st.session_state.last_alert_count:
+    st.session_state.flash_screen = True
+st.session_state.last_alert_count = total_alerts
 
-    st.markdown("### Severity Distribution")
-    if not df_alerts.empty:
-        fig = px.pie(df_alerts, names='severity', color='severity',
-                    color_discrete_map={'critical':'#ef4444', 'warning':'#f59e0b', 'info':'#3b82f6'},
-                    hole=0.4)
-        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+current_eps = load_heartbeat()
+st.session_state.syscall_history.append({"time": datetime.now(), "events": current_eps})
+if len(st.session_state.syscall_history) > 30: # Keep last 30 seconds
+    st.session_state.syscall_history.pop(0)
+
+# 2. Top KPIs
+k1, k2, k3 = st.columns(3)
+with k1:
+    st.markdown(f"""
+        <div class="metric-card">
+            <h3 style="margin:0; color:#94a3b8; font-size:1rem;">Kernel Events / Sec</h3>
+            <h1 style="margin:0; font-size:2.5rem;">{current_eps}</h1>
+        </div>
+    """, unsafe_allow_html=True)
+with k2:
+    alert_color = "#ef4444" if total_alerts > 0 else "#22c55e"
+    st.markdown(f"""
+        <div class="metric-card" style="border-left-color: {alert_color};">
+            <h3 style="margin:0; color:#94a3b8; font-size:1rem;">Total Critical Alerts</h3>
+            <h1 style="margin:0; font-size:2.5rem; color:{alert_color};">{total_alerts}</h1>
+        </div>
+    """, unsafe_allow_html=True)
+with k3:
+    status = "Active & Enforcing" if st.session_state.live_monitor else "Paused"
+    st.markdown(f"""
+        <div class="metric-card" style="border-left-color: #10b981;">
+            <h3 style="margin:0; color:#94a3b8; font-size:1rem;">eBPF Engine Status</h3>
+            <h1 style="margin:0; font-size:1.8rem; padding-top:10px; color:#10b981;">{status}</h1>
+        </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# 3. Main View: Chart on left, Alerts on right
+col_chart, col_alerts = st.columns([2, 1])
+
+with col_chart:
+    st.markdown("### 📈 Live System Call Throughput")
+    if len(st.session_state.syscall_history) > 1:
+        df_history = pd.DataFrame(st.session_state.syscall_history)
+        
+        # Create the chart
+        fig = px.area(df_history, x='time', y='events', 
+                     color_discrete_sequence=['#3b82f6'],
+                     template="plotly_dark")
+        
+        # Add red zones for attack periods (last 10 seconds after each attack)
+        now = datetime.now()
+        for attack_time in st.session_state.attack_events:
+            time_diff = (now - attack_time).total_seconds()
+            if time_diff < 10:
+                # Convert datetime to timestamp for plotly
+                attack_ts = attack_time.timestamp()
+                end_ts = min(attack_ts + 5, now.timestamp())
+                if end_ts > attack_ts:
+                    fig.add_vrect(
+                        x0=attack_ts, 
+                        x1=end_ts,
+                        fillcolor="rgba(239, 68, 68, 0.25)", 
+                        opacity=0.25, 
+                        line_width=0,
+                        annotation_text="ATTACK", 
+                        annotation_position="top left",
+                        annotation_font_color="red"
+                    )
+        
+        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=350,
+                          xaxis_title="", yaxis_title="Events / Sec")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.write("No alert data available yet.")
+        st.info("Gathering kernel telemetry...")
 
-with tab_alerts:
-    st.subheader("Recent Security Incidents")
+with col_alerts:
+    st.markdown("### 🚨 Live Threat Feed")
     if not df_alerts.empty:
-        # Clean the dataframe for display
-        display_df = df_alerts.copy()
-        display_df['reasons'] = display_df['reasons'].apply(lambda x: ", ".join(json.loads(x)) if x else "")
-        st.dataframe(
-            display_df[['timestamp', 'severity', 'pid', 'score', 'reasons']],
-            use_container_width=True,
-            hide_index=True
-        )
+        # Show top 4 most recent alerts
+        for _, row in df_alerts.head(4).iterrows():
+            reasons = ", ".join(row['reasons']) if isinstance(row['reasons'], list) else row['reasons']
+            st.markdown(f"""
+                <div class="alert-critical">
+                    <div style="font-size: 0.8rem; color: #fca5a5;">{row['timestamp']}</div>
+                    <strong style="font-size: 1.1rem;">PID {row['pid']} - {row.get('severity', 'CRITICAL').upper()}</strong><br>
+                    <span style="font-size: 0.9rem;">{reasons}</span>
+                </div>
+            """, unsafe_allow_html=True)
+        if len(df_alerts) > 4:
+            st.caption(f"+ {len(df_alerts) - 4} older alerts hidden.")
     else:
-        st.success("No alerts detected in the current monitoring window.")
+        st.markdown("""
+            <div style="padding:20px; text-align:center; color:#94a3b8; border: 1px dashed #334155; border-radius: 5px;">
+                ✅ System is secure. No anomalous activity detected.
+            </div>
+        """, unsafe_allow_html=True)
 
-with tab_graph:
-    st.subheader("Interactive Provenance Graph")
-    st.caption("Visualize interactions between processes and system resources.")
-    
-    # Mock Graph for demonstration if no real data
-    nodes = [
-        Node(id="web-app", label="Web Server", size=25, color="#3b82f6"),
-        Node(id="sh", label="sh", size=20, color="#ef4444"),
-        Node(id="etc-shadow", label="/etc/shadow", size=15, color="#ef4444", shape="dot"),
-        Node(id="etc-passwd", label="/etc/passwd", size=15, color="#10b981", shape="dot"),
-    ]
-    edges = [
-        Edge(source="web-app", target="etc-passwd", label="read"),
-        Edge(source="web-app", target="sh", label="exec"),
-        Edge(source="sh", target="etc-shadow", label="open"),
-    ]
-
-    config = Config(width=1000, 
-                    height=500, 
-                    directed=True,
-                    physics=True, 
-                    hierarchical=False)
-
-    return_value = agraph(nodes=nodes, 
-                          edges=edges, 
-                          config=config)
-
-# Auto-refresh logic
-if st.checkbox("Enable Real-time Refresh"):
-    time.sleep(refresh_rate)
+# 4. Auto-refresh loop
+if st.session_state.live_monitor:
+    time.sleep(1.5)
     st.rerun()

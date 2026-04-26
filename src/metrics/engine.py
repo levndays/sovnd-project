@@ -1,6 +1,6 @@
 import numpy as np
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from collections import deque
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,35 @@ class MetricsEngine:
         
         # Structure: {pid: {"metrics": array, "mu": array, "sigma": array, "ngram_tree": dict}}
         self.profiles: Dict[int, Dict] = {}
+
+    def update(self, event: Dict[str, Any]):
+        """
+        Update metrics from an eBPF event.
+        """
+        pid = event.get("pid")
+        if pid is None:
+            return
+            
+        syscall_id = event.get("syscall_id", 0)
+        
+        current_vector = np.array([
+            float(syscall_id),
+            float(len(event.get("filename", ""))),
+            float(event.get("tgid", 0)),
+            1.0,  # syscall count
+            float(event.get("cgroup_id", 0) % 1000)
+        ])
+        
+        self.update_scalar_metrics(pid, current_vector)
+        self.update_ngram(pid, syscall_id)
+
+    def get_current_vector(self, pid: int) -> np.ndarray:
+        """
+        Get current metrics vector for a PID (for z-score calculation).
+        """
+        if pid not in self.profiles:
+            return np.zeros(5)
+        return self.profiles[pid]["mu"].copy()
 
     def update_scalar_metrics(self, pid: int, current_vector: np.ndarray):
         """
