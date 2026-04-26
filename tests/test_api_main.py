@@ -120,7 +120,7 @@ class TestAPIEndpoints:
             app.dependency_overrides.clear()
 
     def test_alerts_endpoint_returns_stored_data(self, temp_db):
-        """Test /api/alerts returns actual stored alert data."""
+        """Test /api/alerts returns actual stored alert data with correct types."""
         manager, _ = temp_db
         manager.save_alert({
             "timestamp": "2024-01-15T10:30:00",
@@ -141,6 +141,12 @@ class TestAPIEndpoints:
             assert data[0]["pid"] == 9999
             assert data[0]["score"] == 25.5
             assert data[0]["severity"] == "critical"
+            
+            assert isinstance(data[0]["reasons"], list), "reasons should be a list"
+            assert data[0]["reasons"] == ["unauthorized shell", "shadow access"]
+            
+            assert isinstance(data[0]["container_info"], dict), "container_info should be a dict"
+            assert data[0]["container_info"] == {"id": "test123", "name": "malware"}
         finally:
             app.dependency_overrides.clear()
 
@@ -265,6 +271,9 @@ class TestAPIIntegration:
                 assert len(data) == 1
                 assert data[0]["pid"] == 4242
                 assert data[0]["score"] == 42.0
+                
+                assert isinstance(data[0]["reasons"], list), "reasons must be parsed as list"
+                assert isinstance(data[0]["container_info"], dict), "container_info must be parsed as dict"
             finally:
                 app.dependency_overrides.clear()
 

@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import logging
+import os
 import threading
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -14,8 +15,8 @@ class StorageManager:
     Uses a thread-safe connection pattern and context managers.
     """
     
-    def __init__(self, db_path: str = "data/sovnd.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or os.environ.get("DB_PATH", "data/sovnd.db")
         self._lock = threading.Lock()
         self._init_db()
 

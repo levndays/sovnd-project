@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 from typing import Dict, Optional, Any
 import docker
@@ -12,15 +13,28 @@ class ContainerResolver:
     Implements a thread-safe cache to minimize overhead of Docker API calls.
     """
     
-    def __init__(self, socket_path: str = "unix://var/run/docker.sock"):
+    def __init__(self, socket_path: str = "unix://var/run/docker.sock", target_label: str = None):
+        self.target_label = target_label or os.environ.get("TARGET_LABEL")
         try:
             self.client = docker.DockerClient(base_url=socket_path)
             self._cache: Dict[int, Dict[str, Any]] = {}
             self._lock = threading.RLock()
-            logger.info("ContainerResolver initialized with Docker socket: %s", socket_path)
+            logger.info("ContainerResolver initialized with Docker socket: %s, target_label: %s", 
+                      socket_path, self.target_label)
         except DockerException as e:
             logger.error("Failed to connect to Docker daemon: %s", e)
             self.client = None
+
+    def _container_matches_label(self, container) -> bool:
+        """Check if container has the target label."""
+        if not self.target_label:
+            return True
+        label_key, label_value = self.target_label.split("=") if "=" in self.target_label else (self.target_label, "")
+        container_labels = container.labels or {}
+        actual_value = container_labels.get(label_key)
+        if label_value:
+            return actual_value == label_value
+        return label_key in container_labels
 
     def resolve(self, cgroup_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -51,11 +65,8 @@ class ContainerResolver:
             new_cache = {}
             
             for container in containers:
-                # Docker internal cgroup ID can be found in Inspect data
-                # However, for bpf_get_current_cgroup_id(), we often need to match 
-                # against the inode of the cgroup directory.
-                # For this prototype, we assume a simplified mapping or 
-                # that we'll extend this with more precise inode resolution.
+                if not self._container_matches_label(container):
+                    continue
                 try:
                     # Basic metadata
                     meta = {
