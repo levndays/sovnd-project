@@ -1,6 +1,6 @@
 import numpy as np
 import logging
-from typing import Dict, Optional, List
+from typing import Any, Dict, Optional, List
 from src.metrics.engine import MetricsEngine
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,3 @@ class StatisticalDetector:
             return "warning"
         else:
             return "critical"
-
-# Need to fix the Any import in the generated code
-sed -i '1i from typing import Any' src/detector/statistical.py
