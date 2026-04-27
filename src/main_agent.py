@@ -108,20 +108,10 @@ def run_agent():
                 
                 if STAT_DETECTOR and metrics_engine and stat_detector:
                     metrics_engine.update(event)
-                    
-                    # DEMO MODE: inject random z-score for variation
-                    is_anomaly = random.random() < 0.25
-                    if is_anomaly:
-                        stat_report = {
-                            "pid": event["pid"],
-                            "is_anomalous": True,
-                            "max_z_score": round(random.uniform(2.5, 8.5), 1)
-                        }
-                    else:
-                        stat_report = stat_detector.evaluate(
-                            pid=event["pid"],
-                            current_metrics=metrics_engine.get_current_vector(event["pid"])
-                        )
+                    stat_report = stat_detector.evaluate(
+                        pid=event["pid"],
+                        current_metrics=metrics_engine.get_current_vector(event["pid"])
+                    )
                 else:
                     stat_report = {"pid": event["pid"], "is_anomalous": False, "max_z_score": 0.0}
                 

@@ -29,6 +29,7 @@ plotly==6.7.0
 pluggy==1.6.0
 prometheus_client==0.25.0
 protobuf==7.34.1
+psutil==7.0.0
 pyarrow==24.0.0
 pydantic==2.13.3
 pydantic_core==2.46.3
