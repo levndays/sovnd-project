@@ -54,39 +54,31 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.post("/api/attack")
 async def trigger_attack():
     payloads = [
-        # Signature detection (critical files)
-        "cat /etc/shadow",
-        "cat /etc/sudoers",
-        "cat /var/run/docker.sock",
-        "cat /root/.ssh/id_rsa",
-        "cat /root/.ssh/known_hosts",
-        "python3 -c 'open(\"/proc/kcore\").read()'",
+        # High signature score (15 pts) - critical files
+        ("signature", "cat /etc/shadow"),
+        ("signature", "cat /etc/sudoers"),
+        ("signature", "cat /var/run/docker.sock"),
+        ("signature", "cat /root/.ssh/id_rsa"),
         
-        # Graph detection (sensitive directories)
-        "find /etc -type f 2>/dev/null | head -20",
-        "ls -la /root",
-        "ls -la /etc/passwd",
+        # Graph heuristics - sensitive access
+        ("graph", "find /etc -type f -name '*.conf' 2>/dev/null | head -10"),
+        ("graph", "ls -la /root"),
+        ("graph", "ls -la /etc/passwd /etc/shadow"),
         
-        # Statistical anomaly (high frequency)
-        "python3 -c 'import os; [os.system(f\"echo {i} > /tmp/x{i}\") for i in range(100)]'",
-        "bash -c 'for i in {1..50}; do touch /tmp/test$i; done'",
+        # Statistical anomaly - high frequency
+        ("statistical", "bash -c 'for i in $(seq 1 100); do echo $i > /tmp/f$i; done'"),
+        ("statistical", "touch /tmp/x{1..50}"),
         
-        # Process anomalies
-        "python3 -c 'import subprocess; [subprocess.Popen([\"sleep\", \"1\"]) for _ in range(20)]'",
-        "bash -c 'fork() { fork | fork & }; fork'",
-        
-        # Network-like behavior
-        "python3 -c 'import socket; s=socket.socket(); s.connect((\"8.8.8.8\",53))'",
-        
-        # File modification patterns
-        "bash -c 'echo \"malware\" > /tmp/payload.sh && chmod +x /tmp/payload.sh'",
-        "python3 -c 'open(\"/tmp/trace\",\"w\").write(\"x\"*10000)'",
-        
-        # Privilege escalation attempts
-        "python3 -c 'import os; os.setuid(0)'",
-        "sudo -n true",
+        # Mixed - signature + graph
+        ("both", "cat /etc/shadow && find /root -type f 2>/dev/null"),
     ]
-    selected = random.sample(payloads, 4)
-    for cmd in selected:
-        os.system(f"{cmd} > /dev/null 2>&1 &")
-    return {"status": f"{len(selected)}_attacks_launched", "payloads": selected}
+    
+    # Pick 3 random payloads
+    selected = random.sample(payloads, 3)
+    
+    results = []
+    for type_hint, cmd in selected:
+        result = os.system(f"{cmd} > /dev/null 2>&1 &")
+        results.append({"type": type_hint, "cmd": cmd, "result": result})
+    
+    return {"status": "attacks_launched", "count": len(selected), "payloads": results}
