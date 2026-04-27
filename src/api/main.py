@@ -1,18 +1,37 @@
 import asyncio, json, os, time, random
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from src.storage.sqlite import StorageManager
 
 app = FastAPI()
 storage = StorageManager()
 
 os.makedirs("static", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+static_mount = StaticFiles(directory="static")
+
+class NoCacheStaticMount(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+app.mount("/static", NoCacheStaticMount(directory="static"), name="static")
 
 @app.get("/")
 async def get_index():
-    return FileResponse("static/index.html")
+    content = open("static/index.html", "r").read()
+    return Response(
+        content,
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):

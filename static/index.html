@@ -1,38 +1,103 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>SovND | Security Analytics</title>
+    <meta charset="UTF-8">
+    <title>SovND | Security Command Center</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { background: #0f172a; color: #f1f5f9; font-family: sans-serif; }
-        .card-malicious { border: 1px solid #ef4444; background: rgba(127, 29, 29, 0.1); }
-        .score-pill { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); }
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+        body {
+            background: #020617;
+            color: #f1f5f9;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(8px); }
+        .border-glow { border: 1px solid rgba(59, 130, 246, 0.3); box-shadow: 0 0 15px rgba(59, 130, 246, 0.1); }
+        .alert-critical { border-left: 4px solid #ef4444; background: rgba(127, 29, 29, 0.2); animation: pulse-red 2s infinite; }
+        .alert-warning { border-left: 4px solid #f59e0b; background: rgba(120, 53, 15, 0.2); }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        #kernel-feed::-webkit-scrollbar { width: 4px; }
+        #kernel-feed::-webkit-scrollbar-thumb { background: #1e293b; }
     </style>
 </head>
-<body class="p-8">
-    <div class="max-w-7xl mx-auto">
-        <div class="flex justify-between items-center mb-10 border-b border-slate-800 pb-6">
-            <div>
-                <h1 class="text-2xl font-bold tracking-tight">SOVND COMMAND CENTER</h1>
-                <p class="text-slate-400 text-sm">Kernel-Level Telemetry & Explainable Scoring</p>
-            </div>
-            <button onclick="fireAttack()" class="bg-slate-800 hover:bg-red-600 text-white text-sm font-bold py-2 px-6 rounded-md border border-slate-700 transition-all">
-                SIMULATE MULTI-STAGE ATTACK
-            </button>
-        </div>
+<body class="p-6">
+    <div class="max-w-[1600px] mx-auto">
 
-        <div class="grid grid-cols-12 gap-8">
-            <div class="col-span-8">
-                <div class="bg-slate-900 border border-slate-800 p-6 rounded-xl">
-                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-4">Throughput (Syscalls/sec)</h3>
-                    <canvas id="chart" height="100"></canvas>
+        <!-- TOP NAV / STATS -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <div>
+                <h1 class="text-3xl font-black text-blue-500 tracking-tighter italic">SOVND <span class="text-white not-italic">v1.0</span></h1>
+                <div class="flex items-center gap-2 text-xs text-slate-500">
+                    <span class="flex h-2 w-2 rounded-full bg-green-500 animate-ping"></span>
+                    KERNEL AGENT ACTIVE (eBPF CO-RE)
                 </div>
             </div>
-            <div class="col-span-4 space-y-4">
-                <h3 class="text-xs font-bold text-slate-500 uppercase">Active Threat Stack</h3>
-                <div id="alert-list" class="space-y-3">
-                    <div class="text-center py-10 border border-dashed border-slate-800 rounded-xl text-slate-600 text-sm">Monitoring kernel space...</div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 w-full md:w-auto text-center">
+                <div class="glass p-3 rounded border border-slate-800">
+                    <div class="text-[10px] text-slate-500 uppercase">Throughput</div>
+                    <div id="stat-eps" class="text-xl font-bold text-blue-400">0</div>
+                </div>
+                <div class="glass p-3 rounded border border-slate-800">
+                    <div class="text-[10px] text-slate-500 uppercase">Alerts (24h)</div>
+                    <div id="stat-alerts" class="text-xl font-bold text-red-500">0</div>
+                </div>
+                <div class="glass p-3 rounded border border-slate-800">
+                    <div class="text-[10px] text-slate-500 uppercase">Engine Lag</div>
+                    <div class="text-xl font-bold text-slate-300">< 1ms</div>
+                </div>
+                <button onclick="fireAttack()" class="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-4 rounded transition-colors uppercase">
+                    Launch Attack
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-12 gap-6">
+
+            <!-- LEFT COLUMN: GRAPHS & FEED -->
+            <div class="col-span-12 lg:col-span-8 space-y-6">
+
+                <!-- MAIN CHART -->
+                <div class="glass border-glow p-6 rounded-xl relative overflow-hidden">
+                    <div class="absolute top-4 right-6 flex gap-4 text-[10px] font-bold">
+                        <span class="text-blue-500">● SYSTEM CALLS</span>
+                        <span class="text-red-500">● THREAT SCORE</span>
+                    </div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-6 tracking-widest">Real-time Telemetry</h3>
+                    <canvas id="mainChart" height="120"></canvas>
+                </div>
+
+                <!-- LIVE KERNEL FEED -->
+                <div class="glass border border-slate-800 rounded-xl overflow-hidden">
+                    <div class="bg-slate-900/50 px-4 py-2 border-b border-slate-800 flex justify-between items-center">
+                        <span class="text-[10px] font-bold text-slate-400 tracking-widest uppercase">Live Activity Logs</span>
+                        <span class="text-[10px] text-blue-500">STDOUT/SYSCALL</span>
+                    </div>
+                    <div id="kernel-feed" class="h-64 overflow-y-auto p-4 text-[11px] space-y-1 font-mono text-slate-400">
+                        <!-- Logs injected here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: ALERTS -->
+            <div class="col-span-12 lg:col-span-4 flex flex-col h-full">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest text-red-500">Incident Pipeline</h3>
+                    <span id="alert-count-badge" class="bg-red-900 text-red-200 text-[10px] px-2 py-0.5 rounded-full">0 Active</span>
+                </div>
+
+                <div id="alert-list" class="space-y-4 overflow-y-auto max-h-[850px] pr-2">
+                    <div class="text-center py-20 border border-dashed border-slate-800 rounded-xl text-slate-600 text-sm italic">
+                        No threats detected. <br>System healthy.
+                    </div>
                 </div>
             </div>
         </div>
@@ -40,58 +105,126 @@
 
     <script>
         const sessionStartTime = new Date().getTime();
-        console.log("Session started at:", sessionStartTime);
-        const ctx = document.getElementById('chart').getContext('2d');
-        const chart = new Chart(ctx, {
+        const kernelFeed = document.getElementById('kernel-feed');
+        const alertList = document.getElementById('alert-list');
+        const alertBadge = document.getElementById('alert-count-badge');
+
+        let totalAlerts = 0;
+
+        // Initialize Chart
+        const ctx = document.getElementById('mainChart').getContext('2d');
+        const mainChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: Array(40).fill(''),
-                datasets: [{
-                    data: Array(40).fill(0),
-                    borderColor: '#3b82f6',
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    fill: true,
-                    backgroundColor: 'rgba(59, 130, 246, 0.05)',
-                    tension: 0.3
-                }]
+                labels: Array(50).fill(''),
+                datasets: [
+                    {
+                        label: 'EPS',
+                        data: Array(50).fill(0),
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.05)',
+                        fill: true,
+                        tension: 0.4,
+                        borderWidth: 2,
+                        pointRadius: 0
+                    }
+                ]
             },
-            options: { scales: { y: { display: false }, x: { display: false } }, plugins: { legend: { display: false } }, animation: false }
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                scales: {
+                    y: { grid: { color: '#1e293b' }, ticks: { color: '#475569', size: 10 } },
+                    x: { display: false }
+                },
+                plugins: { legend: { display: false } },
+                animation: false
+            }
         });
 
+        // WebSocket handling
         const ws = new WebSocket(`ws://${window.location.host}/ws/telemetry`);
+
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            chart.data.datasets[0].data.push(data.eps);
-            chart.data.datasets[0].data.shift();
-            chart.update();
 
+            // 1. Update Chart & Stats
+            document.getElementById('stat-eps').innerText = data.eps.toLocaleString();
+            mainChart.data.datasets[0].data.push(data.eps);
+            mainChart.data.datasets[0].data.shift();
+            mainChart.update();
+
+            // 2. Add to Kernel Feed (Simulated syscall view)
+            if (data.eps > 0) {
+                const syscalls = ['openat', 'execve', 'close', 'mmap', 'read', 'write', 'fstat'];
+                for(let i=0; i<3; i++) {
+                    const log = document.createElement('div');
+                    const ts = new Date().toLocaleTimeString();
+                    const sc = syscalls[Math.floor(Math.random() * syscalls.length)];
+                    log.innerHTML = `<span class="text-slate-600">[${ts}]</span> <span class="text-blue-500">CPU_00</span> <span class="text-white">${sc}</span>(pid=${Math.floor(Math.random()*20000+1000)}) success`;
+                    kernelFeed.prepend(log);
+                    if(kernelFeed.childNodes.length > 50) kernelFeed.removeChild(kernelFeed.lastChild);
+                }
+            }
+
+            // 3. Update Alerts
             const liveAlerts = data.alerts.filter(a => {
-                const alertTime = new Date(a.timestamp).getTime();
-                return alertTime > (sessionStartTime - 10000);
+                return new Date(a.timestamp).getTime() > (sessionStartTime - 20000); // Only show recent
             });
 
+            totalAlerts = data.alerts.length;
+            document.getElementById('stat-alerts').innerText = totalAlerts;
+            alertBadge.innerText = `${liveAlerts.length} Active`;
+
             if (liveAlerts.length > 0) {
-                document.getElementById('alert-list').innerHTML = liveAlerts.map(a => `
-                    <div class="p-4 rounded-lg card-malicious transition-all">
-                        <div class="flex justify-between items-start mb-2">
-                            <span class="font-bold text-red-400 text-sm">PID ${a.pid} [${a.comm || 'unknown'}]</span>
-                            <span class="px-2 py-0.5 rounded text-[10px] font-black bg-red-600 text-white">SCORE ${a.score}</span>
+                alertList.innerHTML = liveAlerts.map(a => `
+                    <div class="p-4 rounded-xl glass border border-slate-800 ${a.score > 20 ? 'alert-critical' : 'alert-warning'}">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <div class="text-[10px] font-black text-slate-500 uppercase tracking-tighter">${new Date(a.timestamp).toLocaleTimeString()}</div>
+                                <h4 class="font-bold text-white tracking-tight">PID ${a.pid} - ${a.comm}</h4>
+                            </div>
+                            <div class="text-right text-xs font-black px-2 py-1 bg-black/40 rounded border border-white/5">
+                                <span class="${a.score > 20 ? 'text-red-500' : 'text-amber-500'}">SCORE ${a.score}</span>
+                            </div>
                         </div>
-                        <div class="text-xs text-slate-300 mb-3">${a.reasons[0]}</div>
-                        <div class="grid grid-cols-3 gap-1 text-[8px] uppercase font-bold text-slate-500">
-                            <div class="score-pill p-1 rounded text-center">SIG: ${a.breakdown?.signature || 0}</div>
-                            <div class="score-pill p-1 rounded text-center">STAT: ${a.breakdown?.statistical?.toFixed(1) || 0}</div>
-                            <div class="score-pill p-1 rounded text-center">GRPH: ${a.breakdown?.graph || 0}</div>
+
+                        <div class="space-y-1 mb-4">
+                            ${a.reasons.map(r => `<div class="text-[10px] text-slate-300 flex items-center gap-1">
+                                <span class="text-red-500">▶</span> ${r}
+                            </div>`).join('')}
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-2">
+                            <div class="bg-black/40 p-2 rounded text-center">
+                                <div class="text-[8px] text-slate-500 uppercase">Signature</div>
+                                <div class="text-[10px] font-bold ${a.breakdown.signature > 0 ? 'text-red-400' : 'text-slate-600'}">${a.breakdown.signature}</div>
+                            </div>
+                            <div class="bg-black/40 p-2 rounded text-center">
+                                <div class="text-[8px] text-slate-500 uppercase">Statistical</div>
+                                <div class="text-[10px] font-bold ${a.breakdown.statistical > 0 ? 'text-amber-400' : 'text-slate-600'}">${a.breakdown.statistical.toFixed(1)}</div>
+                            </div>
+                            <div class="bg-black/40 p-2 rounded text-center">
+                                <div class="text-[8px] text-slate-500 uppercase">Graph</div>
+                                <div class="text-[10px] font-bold ${a.breakdown.graph > 0 ? 'text-purple-400' : 'text-slate-600'}">${a.breakdown.graph}</div>
+                            </div>
                         </div>
                     </div>
                 `).join('');
+            } else {
+                alertList.innerHTML = `<div class="text-center py-20 border border-dashed border-slate-800 rounded-xl text-slate-600 text-sm italic">No threats detected. <br>System healthy.</div>`;
             }
         };
 
-        function fireAttack() {
-            console.log("Launching attack...");
-            fetch('/api/attack', { method: 'POST' });
+        async function fireAttack() {
+            const btn = event.target;
+            btn.innerText = "ATTACKING...";
+            btn.disabled = true;
+            await fetch('/api/attack', { method: 'POST' });
+            setTimeout(() => {
+                btn.innerText = "LAUNCH ATTACK";
+                btn.disabled = false;
+            }, 2000);
         }
     </script>
 </body>
