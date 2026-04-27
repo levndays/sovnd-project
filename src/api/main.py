@@ -54,14 +54,39 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.post("/api/attack")
 async def trigger_attack():
     payloads = [
+        # Signature detection (critical files)
         "cat /etc/shadow",
-        "cat /var/run/docker.sock",
         "cat /etc/sudoers",
-        "python3 -c 'import os; os.open(\"/proc/kcore\", 0)'",
-        "python3 -c 'import os; os.open(\"/root/.ssh/id_rsa\", 0)'",
-        "bash -c 'echo \"backdoor\" > /tmp/check'"
+        "cat /var/run/docker.sock",
+        "cat /root/.ssh/id_rsa",
+        "cat /root/.ssh/known_hosts",
+        "python3 -c 'open(\"/proc/kcore\").read()'",
+        
+        # Graph detection (sensitive directories)
+        "find /etc -type f 2>/dev/null | head -20",
+        "ls -la /root",
+        "ls -la /etc/passwd",
+        
+        # Statistical anomaly (high frequency)
+        "python3 -c 'import os; [os.system(f\"echo {i} > /tmp/x{i}\") for i in range(100)]'",
+        "bash -c 'for i in {1..50}; do touch /tmp/test$i; done'",
+        
+        # Process anomalies
+        "python3 -c 'import subprocess; [subprocess.Popen([\"sleep\", \"1\"]) for _ in range(20)]'",
+        "bash -c 'fork() { fork | fork & }; fork'",
+        
+        # Network-like behavior
+        "python3 -c 'import socket; s=socket.socket(); s.connect((\"8.8.8.8\",53))'",
+        
+        # File modification patterns
+        "bash -c 'echo \"malware\" > /tmp/payload.sh && chmod +x /tmp/payload.sh'",
+        "python3 -c 'open(\"/tmp/trace\",\"w\").write(\"x\"*10000)'",
+        
+        # Privilege escalation attempts
+        "python3 -c 'import os; os.setuid(0)'",
+        "sudo -n true",
     ]
-    selected = random.sample(payloads, 3)
+    selected = random.sample(payloads, 4)
     for cmd in selected:
         os.system(f"{cmd} > /dev/null 2>&1 &")
-    return {"status": "3_attacks_launched"}
+    return {"status": f"{len(selected)}_attacks_launched", "payloads": selected}
