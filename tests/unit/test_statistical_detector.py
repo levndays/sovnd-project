@@ -1,10 +1,7 @@
 import pytest
 import time
-from unittest.mock import patch
 from pathlib import Path
-import sys
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from unittest.mock import patch
 
 from core.config import Settings
 from core.detection.statistical import StatisticalDetector

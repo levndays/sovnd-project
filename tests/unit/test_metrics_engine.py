@@ -1,8 +1,3 @@
-import sys
-from pathlib import Path
-ROOT_DIR = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(ROOT_DIR))
-
 import pytest
 import time
 from unittest.mock import patch

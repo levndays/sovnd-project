@@ -2,9 +2,6 @@ import pytest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 import threading
-import sys
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from internal.container.resolver import ContainerResolver
 
@@ -78,10 +75,6 @@ class TestContainerResolverResolve:
 
     def test_resolve_handles_edge_cases(self):
         """Verify resolve handles edge cases gracefully."""
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from internal.container.resolver import ContainerResolver
-        
         resolver = ContainerResolver.__new__(ContainerResolver)
         resolver._cache = {}
         resolver.client = None

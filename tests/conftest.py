@@ -1,6 +1,10 @@
 import sys
 import types
+from pathlib import Path
 from unittest.mock import MagicMock
+
+_project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(_project_root))
 
 _mock_docker = types.ModuleType("docker")
 _mock_docker.DockerClient = MagicMock
