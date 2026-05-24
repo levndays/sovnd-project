@@ -3,7 +3,12 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    privileged: true
+    cap_add:
+      - BPF
+      - PERFMON
+      - SYS_ADMIN
+      - SYS_PTRACE
+      - NET_ADMIN
     pid: host
     network_mode: host
     environment:
@@ -14,7 +19,7 @@ services:
       - /sys/fs/bpf:/sys/fs/bpf:rw
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - sovnd-data:/app/data
-    restart: always
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/status"]
       interval: 10s
@@ -28,6 +33,8 @@ services:
       - "sovnd.monitor=true"
     ports:
       - "8080:80"
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "service", "nginx", "status"]
       interval: 10s

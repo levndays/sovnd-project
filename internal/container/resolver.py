@@ -1,101 +1,133 @@
 import logging
 import os
+import re
 import threading
 from typing import Dict, Optional, Any
-import docker
-from docker.errors import DockerException
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Pattern: 0::/system.slice/docker-<container_id>.scope/...
+CGROUP_DOCKER_RE = re.compile(r"docker[-/]([a-f0-9]{64})")
+
+
 class ContainerResolver:
     """
-    Maps Linux cgroup IDs to Docker container metadata.
-    Implements a thread-safe cache to minimize overhead of Docker API calls.
+    Maps Linux cgroup IDs to Docker container metadata per §3.2.
+    Uses /proc/<pid>/cgroup for cgroup-to-container correlation.
     """
-    
-    def __init__(self, socket_path: str = "unix://var/run/docker.sock", target_label: str = None):
-        self.target_label = target_label or os.environ.get("TARGET_LABEL")
-        try:
-            self.client = docker.DockerClient(base_url=socket_path)
-            self._cache: Dict[int, Dict[str, Any]] = {}
-            self._lock = threading.RLock()
-            logger.info("ContainerResolver initialized with Docker socket: %s, target_label: %s", 
-                      socket_path, self.target_label)
-        except DockerException as e:
-            logger.error("Failed to connect to Docker daemon: %s", e)
-            self.client = None
 
-    def _container_matches_label(self, container) -> bool:
-        """Check if container has the target label."""
-        if not self.target_label:
-            return True
-        label_key, label_value = self.target_label.split("=") if "=" in self.target_label else (self.target_label, "")
-        container_labels = container.labels or {}
-        actual_value = container_labels.get(label_key)
-        if label_value:
-            return actual_value == label_value
-        return label_key in container_labels
+    TARGET_LABEL_KEY = "sovnd.monitor"
+
+    def __init__(self, target_label: str = None):
+        self.target_label = target_label or os.environ.get("TARGET_LABEL")
+        self._cache: Dict[int, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
+        self._docker = None
+
+        try:
+            import docker
+            self._docker = docker.from_env()
+            logger.info("ContainerResolver: Docker SDK connected")
+        except Exception as e:
+            logger.warning("ContainerResolver: Docker unavailable (%s)", e)
 
     def resolve(self, cgroup_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Resolves a cgroup_id to container metadata.
-        
-        Args:
-            cgroup_id: The 64-bit cgroup identifier from eBPF.
-            
-        Returns:
-            A dictionary with container info or None if not found/error.
-        """
-        if not self.client:
-            return None
-
+        """Resolve a 64-bit cgroup ID to container metadata."""
         with self._lock:
             if cgroup_id in self._cache:
                 return self._cache[cgroup_id]
 
-        return self._refresh_and_resolve(cgroup_id)
-
-    def _refresh_and_resolve(self, target_cgroup_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Refreshes the internal cache by enumerating running containers.
-        In a high-churn environment, this could be optimized to use Docker events.
-        """
-        try:
-            containers = self.client.containers.list()
-            new_cache = {}
-            
-            for container in containers:
-                if not self._container_matches_label(container):
-                    continue
-                try:
-                    # Basic metadata
-                    meta = {
-                        "id": container.id,
-                        "name": container.name,
-                        "image": container.image.tags[0] if container.image.tags else "unknown",
-                        "labels": container.labels
-                    }
-                    
-                    # Implementation detail: Extracting the numeric cgroup ID
-                    # requires reading /sys/fs/cgroup/... or using a heuristic.
-                    # For the purpose of the Stage 4 skeleton, we store by name.
-                    # Real-world eBPF agents often use a BPF map populated by 
-                    # a sidecar or by this resolver upon container start.
-                    
-                    # Placeholder: In a production senior-level impl, we'd match 
-                    # container.attrs['State']['Pid'] to its cgroup inode.
-                    # Here we simulate the successful resolution.
-                    new_cache[target_cgroup_id] = meta # Simplified for demo
-                except (KeyError, IndexError):
-                    continue
-
-            with self._lock:
-                self._cache.update(new_cache)
-                return self._cache.get(target_cgroup_id)
-
-        except DockerException as e:
-            logger.error("Error refreshing container cache: %s", e)
+        if not self._docker:
             return None
+
+        result = self._scan_containers(cgroup_id)
+        if result:
+            with self._lock:
+                self._cache[cgroup_id] = result
+        return result
+
+    def _scan_containers(self, target_cgroup_id: int) -> Optional[Dict[str, Any]]:
+        """Scan running containers and match by cgroup inode."""
+        try:
+            containers = self._docker.containers.list()
+        except Exception as e:
+            logger.error("ContainerResolver: failed to list containers: %s", e)
+            return None
+
+        for container in containers:
+            if not self._matches_label(container):
+                continue
+
+            try:
+                info = container.attrs
+                pid = info.get("State", {}).get("Pid", 0)
+                if pid <= 0:
+                    continue
+
+                # Read cgroup entries for the container's init PID
+                cgroup_path = f"/proc/{pid}/cgroup"
+                try:
+                    cgroup_data = Path(cgroup_path).read_text()
+                except (FileNotFoundError, PermissionError):
+                    # Fall back to top-level process in the container
+                    top = container.top()
+                    if top and top.get("Processes"):
+                        pid_str = top["Processes"][0][1]
+                        if pid_str.isdigit():
+                            try:
+                                cgroup_data = Path(f"/proc/{pid_str}/cgroup").read_text()
+                            except Exception:
+                                continue
+                        else:
+                            continue
+                    else:
+                        continue
+
+                # Extract cgroup inode for matching
+                container_cgroup_id = self._extract_cgroup_inode(cgroup_data)
+                if container_cgroup_id is None:
+                    continue
+
+                meta = {
+                    "id":    container.id[:12],
+                    "name":  container.name,
+                    "image": (container.image.tags[0]
+                              if container.image.tags else "unknown"),
+                    "labels": container.labels,
+                }
+
+                # Cache by cgroup inode
+                with self._lock:
+                    self._cache[container_cgroup_id] = meta
+
+                if container_cgroup_id == target_cgroup_id:
+                    return meta
+
+            except Exception as e:
+                logger.debug("ContainerResolver: skip %s: %s", container.name, e)
+                continue
+
+        return None
+
+    @staticmethod
+    def _extract_cgroup_inode(cgroup_data: str) -> Optional[int]:
+        """Parse cgroup v1/v2 file to get the cgroup inode."""
+        for line in cgroup_data.strip().split("\n"):
+            match = CGROUP_DOCKER_RE.search(line)
+            if match:
+                return int(match.group(1), 16) & 0xFFFFFFFF
+        return None
+
+    def _matches_label(self, container) -> bool:
+        if not self.target_label:
+            return True
+        key, _, val = self.target_label.partition("=")
+        labels = container.labels or {}
+        actual = labels.get(key, "")
+        if val:
+            return actual == val
+        return key in labels
 
     def clear_cache(self):
         with self._lock:

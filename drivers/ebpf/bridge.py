@@ -1,91 +1,115 @@
 import ctypes
-import os
+import logging
 import threading
 import queue
-from dataclasses import dataclass
+import time
+from pathlib import Path
+from typing import Optional, Dict, Any
 
-# Define the event structure matching tracer.bpf.c
+logger = logging.getLogger(__name__)
+
 class Event(ctypes.Structure):
     _fields_ = [
-        ("pid", ctypes.c_uint32),
-        ("tgid", ctypes.c_uint32),
-        ("cgroup_id", ctypes.c_uint64),
-        ("syscall_id", ctypes.c_uint32),
-        ("comm", ctypes.c_char * 16),
-        ("filename", ctypes.c_char * 256),
+        ("pid",         ctypes.c_uint32),
+        ("tgid",        ctypes.c_uint32),
+        ("cgroup_id",   ctypes.c_uint64),
+        ("op_type",     ctypes.c_uint32),
+        ("fd",          ctypes.c_uint32),
+        ("fd_type",     ctypes.c_uint32),
+        ("bytes",       ctypes.c_uint64),
+        ("timestamp_ns",ctypes.c_uint64),
+        ("comm",        ctypes.c_char * 16),
+        ("filename",    ctypes.c_char * 256),
     ]
 
-# Callback type for the C loader
-EVENT_CB = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.POINTER(Event), ctypes.c_size_t)
+OP_OPEN  = 1
+OP_CLOSE = 2
+OP_READ  = 3
+OP_WRITE = 4
+
+FD_TYPE_FILE   = 1
+FD_TYPE_SOCKET = 2
+FD_TYPE_PIPE   = 3
+FD_TYPE_ANON   = 4
+FD_TYPE_UNKNOWN = 0
+
+OP_NAMES = {OP_OPEN: "open", OP_CLOSE: "close", OP_READ: "read", OP_WRITE: "write"}
+FD_TYPE_NAMES = {
+    FD_TYPE_FILE: "file", FD_TYPE_SOCKET: "socket",
+    FD_TYPE_PIPE: "pipe", FD_TYPE_ANON: "anon", FD_TYPE_UNKNOWN: "unknown"
+}
+
+def event_to_dict(evt: Event) -> Dict[str, Any]:
+    return {
+        "pid":         evt.pid,
+        "tgid":        evt.tgid,
+        "cgroup_id":   evt.cgroup_id,
+        "op_type":     evt.op_type,
+        "op_name":     OP_NAMES.get(evt.op_type, "?"),
+        "fd":          evt.fd,
+        "fd_type":     evt.fd_type,
+        "fd_type_name": FD_TYPE_NAMES.get(evt.fd_type, "?"),
+        "bytes":       evt.bytes,
+        "timestamp_ns": evt.timestamp_ns,
+        "comm":        evt.comm.decode("utf-8", errors="replace").strip("\x00"),
+        "filename":    evt.filename.decode("utf-8", errors="replace").strip("\x00"),
+    }
 
 class EBPFAgent:
-    def __init__(self, lib_path="./drivers/ebpf/libloader.so"):
-        self.lib = ctypes.CDLL(os.path.abspath(lib_path))
-        self.event_queue = queue.Queue()
-        
-        self.lib.start_loader.argtypes = [EVENT_CB]
-        self.lib.start_loader.restype = ctypes.c_int
-        
-        self.lib.poll_events.argtypes = [ctypes.c_int]
-        self.lib.poll_events.restype = ctypes.c_int
-        
-        self.lib.stop_loader.argtypes = []
-        self.lib.stop_loader.restype = None
-        
-        self._callback_ref = EVENT_CB(self._event_handler)
-        self.running = False
-        self.thread = None
+    def __init__(self, lib_path: str):
+        self.lib_path = Path(lib_path)
+        self.lib = None
+        self._event_queue = queue.Queue()
+        self._polling = False
+        self._poll_thread = None
+        self._ctx = None
 
-    def _event_handler(self, ctx, event_ptr, size):
-        event = event_ptr.contents
-        # Copy data out of the BPF ring buffer to the Python queue
-        self.event_queue.put({
-            "pid": event.pid,
-            "tgid": event.tgid,
-            "cgroup_id": event.cgroup_id,
-            "syscall_id": event.syscall_id,
-            "comm": event.comm.decode('utf-8', 'replace'),
-            "filename": event.filename.decode('utf-8', 'replace')
-        })
+    def _c_callback(self, ctx, data, size):
+        if size < ctypes.sizeof(Event):
+            return
+        evt = ctypes.cast(data, ctypes.POINTER(Event)).contents
+        self._event_queue.put(evt)
 
     def start(self):
-        err = self.lib.start_loader(self._callback_ref)
+        if not self.lib_path.exists():
+            raise FileNotFoundError(f"libloader.so not found at {self.lib_path}")
+
+        CBFUNC = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t)
+        self._callback = CBFUNC(self._c_callback)
+
+        self.lib = ctypes.CDLL(str(self.lib_path))
+        self.lib.start_loader.argtypes = [CBFUNC]
+        self.lib.start_loader.restype = ctypes.c_int
+        self.lib.poll_events.argtypes = [ctypes.c_int]
+        self.lib.poll_events.restype = ctypes.c_int
+        self.lib.stop_loader.argtypes = []
+        self.lib.stop_loader.restype = None
+
+        err = self.lib.start_loader(self._callback)
         if err != 0:
-            raise RuntimeError(f"Failed to start eBPF loader: {err}")
-        
-        self.running = True
-        self.thread = threading.Thread(target=self._poll_loop, daemon=True)
-        self.thread.start()
+            raise RuntimeError(f"Failed to start eBPF loader (err={err})")
+
+        self._polling = True
+        self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._poll_thread.start()
 
     def _poll_loop(self):
-        while self.running:
-            self.lib.poll_events(100) # 100ms timeout
+        while self._polling:
+            try:
+                self.lib.poll_events(100)
+            except Exception:
+                time.sleep(0.1)
 
-    def stop(self):
-        self.running = False
-        if self.thread:
-            self.thread.join()
-        self.lib.stop_loader()
-
-    def get_event(self, block=True, timeout=None):
+    def get_event(self, timeout: float = 1.0) -> Optional[Dict[str, Any]]:
         try:
-            return self.event_queue.get(block=block, timeout=timeout)
+            evt = self._event_queue.get(timeout=timeout)
+            return event_to_dict(evt)
         except queue.Empty:
             return None
 
-if __name__ == "__main__":
-    # Basic test if run directly
-    import time
-    agent = EBPFAgent()
-    print("Starting agent... (requires root/CAP_BPF)")
-    try:
-        agent.start()
-        print("Monitoring... Press Ctrl+C to stop")
-        while True:
-            event = agent.get_event(timeout=1)
-            if event:
-                print(f"Event: {event}")
-    except KeyboardInterrupt:
-        pass
-    finally:
-        agent.stop()
+    def stop(self):
+        self._polling = False
+        if self._poll_thread:
+            self._poll_thread.join(timeout=2.0)
+        if self.lib:
+            self.lib.stop_loader()

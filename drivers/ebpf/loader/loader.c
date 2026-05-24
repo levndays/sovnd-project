@@ -2,11 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <getopt.h>
-#include <sys/resource.h>
+#include <sys/stat.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include "tracer.skel.h"
+
+#define PIN_DIR "/sys/fs/bpf/sovnd"
 
 static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
 {
@@ -27,6 +28,32 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
     return 0;
 }
 
+int pin_maps(void)
+{
+    int err;
+    mkdir(PIN_DIR, 0755);
+
+    err = bpf_map__pin(skel->maps.rb, PIN_DIR "/rb");
+    if (err) fprintf(stderr, "[loader] rb pin: %s\n", strerror(-err));
+
+    err = bpf_map__pin(skel->maps.proc_stats, PIN_DIR "/proc_stats");
+    if (err) fprintf(stderr, "[loader] proc_stats pin: %s\n", strerror(-err));
+
+    err = bpf_map__pin(skel->maps.fd_table, PIN_DIR "/fd_table");
+    if (err) fprintf(stderr, "[loader] fd_table pin: %s\n", strerror(-err));
+
+    err = bpf_map__pin(skel->maps.event_rate, PIN_DIR "/event_rate");
+    if (err) fprintf(stderr, "[loader] event_rate pin: %s\n", strerror(-err));
+
+    err = bpf_map__pin(skel->maps.filter_config, PIN_DIR "/filter_config");
+    if (err) fprintf(stderr, "[loader] filter_config pin: %s\n", strerror(-err));
+
+    err = bpf_map__pin(skel->maps.container_map, PIN_DIR "/container_map");
+    if (err) fprintf(stderr, "[loader] container_map pin: %s\n", strerror(-err));
+
+    return 0;
+}
+
 int start_loader(event_cb_t cb)
 {
     int err;
@@ -36,26 +63,28 @@ int start_loader(event_cb_t cb)
 
     skel = tracer_bpf__open();
     if (!skel) {
-        fprintf(stderr, "Failed to open BPF skeleton\n");
+        fprintf(stderr, "[loader] Failed to open BPF skeleton\n");
         return 1;
     }
 
     err = tracer_bpf__load(skel);
     if (err) {
-        fprintf(stderr, "Failed to load BPF skeleton\n");
+        fprintf(stderr, "[loader] Failed to load BPF skeleton\n");
         goto cleanup;
     }
 
     err = tracer_bpf__attach(skel);
     if (err) {
-        fprintf(stderr, "Failed to attach BPF skeleton\n");
+        fprintf(stderr, "[loader] Failed to attach BPF skeleton\n");
         goto cleanup;
     }
+
+    pin_maps();
 
     rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
     if (!rb) {
         err = -1;
-        fprintf(stderr, "Failed to create ring buffer\n");
+        fprintf(stderr, "[loader] Failed to create ring buffer\n");
         goto cleanup;
     }
 

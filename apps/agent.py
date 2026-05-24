@@ -1,135 +1,111 @@
-import time, sys, os, json, dataclasses
+import time
+import json
+import os
+import logging
 from pathlib import Path
-import random
 
-try:
-    import numpy as np
-    HAS_NUMPY = True
-except ImportError:
-    HAS_NUMPY = False
-    np = None
-    print("⚠️ numpy not available - statistical detection disabled")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
+logger = logging.getLogger("agent")
 
-try:
-    import networkx as nx
-    HAS_NETWORKX = True
-except ImportError:
-    HAS_NETWORKX = False
-    nx = None
-    print("⚠️ networkx not available - graph detection disabled")
+from drivers.ebpf.bridge import EBPFAgent, OP_OPEN, OP_CLOSE, OP_READ, OP_WRITE, \
+    FD_TYPE_FILE, FD_TYPE_SOCKET, FD_TYPE_PIPE
+from core.detection.signature import SignatureDetector
+from core.detection.statistical import StatisticalDetector
+from core.metrics.engine import MetricsEngine
+from core.scoring.engine import ScoringEngine
+from core.graph.builder import ProvenanceGraphBuilder
+from internal.storage.sqlite import StorageManager
 
-try:
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from drivers.ebpf.bridge import EBPFAgent
-    from core.detection.signature import SignatureDetector
-    
-    if HAS_NUMPY:
-        from core.detection.statistical import StatisticalDetector
-        from core.metrics.engine import MetricsEngine
-        from core.scoring.engine import ScoringEngine
-        STAT_DETECTOR = True
-    else:
-        from core.scoring.engine import ScoringEngine
-        STAT_DETECTOR = False
-    
-    if HAS_NETWORKX:
-        from core.graph.builder import ProvenanceGraphBuilder
-    else:
-        ProvenanceGraphBuilder = None
-    
-    from internal.storage.sqlite import StorageManager
-except Exception as e:
-    print(f"⚠️ Import error: {e}")
-    raise
+HEARTBEAT_INTERVAL = 1.0
+
 
 def run_agent():
-    print("🛡️ Starting SovND Real-time eBPF Engine...")
+    print("\N{SHIELD} Starting SovND Real-time eBPF Engine...")
     lib_path = Path(__file__).parent.parent / "drivers" / "ebpf" / "libloader.so"
-    
-    # Pre-populated process heap for demo (simulates baseline profiles)
-    preloaded_pids = list(range(1000, 1100))
-    random.shuffle(preloaded_pids)
-    
+
     agent = EBPFAgent(lib_path=str(lib_path))
     sig_detector = SignatureDetector()
     scoring = ScoringEngine(threshold=15.0)
     storage = StorageManager()
-    
-    if STAT_DETECTOR and HAS_NUMPY:
-        print("📊 Statistical detection enabled")
-        metrics_engine = MetricsEngine()
-        stat_detector = StatisticalDetector(engine=metrics_engine, threshold_z=2.5)
-    else:
-        print("📊 Statistical detection DISABLED")
-        metrics_engine = None
-        stat_detector = None
-    
-    if HAS_NETWORKX and ProvenanceGraphBuilder:
-        print("🔗 Graph detection enabled")
-        graph_builder = ProvenanceGraphBuilder()
-    else:
-        print("🔗 Graph detection DISABLED")
-        graph_builder = None
+    metrics_engine = MetricsEngine(alpha=0.3, n_gram_size=3)
+    stat_detector = StatisticalDetector(engine=metrics_engine, threshold_z=3.0)
+    graph_builder = ProvenanceGraphBuilder()
 
-    # Clear old data for demo freshness
     storage.clear_alerts()
+    os.makedirs("data", exist_ok=True)
 
     try:
         agent.start()
-        print("✅ eBPF Agent attached. Monitoring...")
+        print("\N{WHITE HEAVY CHECK MARK} eBPF Agent attached. Monitoring...")
         events_this_second = 0
         last_heartbeat = time.time()
-        
+
         while True:
-            current_time = time.time()
-            if current_time - last_heartbeat >= 1.0:
-                print(f"📊 [Agent Heartbeat] Processing {events_this_second} events/sec", flush=True)
+            now = time.time()
+            if now - last_heartbeat >= HEARTBEAT_INTERVAL:
                 with open("data/heartbeat.json", "w") as f:
-                    json.dump({"events_per_sec": events_this_second, "timestamp": current_time}, f)
+                    json.dump({"events_per_sec": events_this_second, "timestamp": now}, f)
                 os.chmod("data/heartbeat.json", 0o666)
                 events_this_second = 0
-                last_heartbeat = current_time
+                last_heartbeat = now
 
             event = agent.get_event(timeout=0.1)
-            if event:
-                events_this_second += 1
-                
-                graph_heuristics = []
-                
-                if graph_builder:
-                    graph_builder.add_event(event)
-                    subgraph = graph_builder.get_process_subgraph(event["pid"])
-                    if subgraph.number_of_nodes() > 3:
-                        graph_heuristics.append("high_connectivity")
-                
-                if event.get("filename", "").startswith("/etc") or event.get("filename", "").startswith("/root"):
-                    graph_heuristics.append("sensitive_access")
-                
-                sig_match = sig_detector.analyze_event(event)
-                
-                if STAT_DETECTOR and metrics_engine and stat_detector:
-                    metrics_engine.update(event)
-                    stat_report = stat_detector.evaluate(
-                        pid=event["pid"],
-                        current_metrics=metrics_engine.get_current_vector(event["pid"])
-                    )
-                else:
-                    stat_report = {"pid": event["pid"], "is_anomalous": False, "max_z_score": 0.0}
-                
-                alert = scoring.compute_score(
-                    event=event,
-                    stat_report=stat_report,
-                    sig_match=sig_match,
-                    graph_heuristics=graph_heuristics
-                )
-                
-                if alert:
-                    storage.save_alert(dataclasses.asdict(alert))
-                    try: os.chmod(storage.db_path, 0o666)
-                    except: pass
-                    print(f"🚨 ALERT: PID {event['pid']} [{event['comm']}] - SCORE {alert.score}", flush=True)
-    except KeyboardInterrupt: pass
-    finally: agent.stop()
+            if not event:
+                continue
+
+            events_this_second += 1
+            pid = event["pid"]
+
+            # ── metrics & statistical ─────────────────────────
+            metrics_engine.update(event)
+            current_vec = metrics_engine.get_current_vector(pid)
+            stat_report = stat_detector.evaluate(pid, current_vec)
+
+            # ── signature ─────────────────────────────────────
+            sig_match = sig_detector.analyze_event(event)
+
+            # ── graph ─────────────────────────────────────────
+            graph_heuristics = []
+            graph_builder.add_event(event)
+            subgraph = graph_builder.get_process_subgraph(pid)
+            if subgraph.number_of_nodes() > 5:
+                graph_heuristics.append("high_connectivity")
+
+            fname = event.get("filename", "")
+            if fname.startswith("/etc") or fname.startswith("/root") or fname.startswith("/var/run"):
+                graph_heuristics.append("sensitive_access")
+
+            # detect bulk open/close bursts (ransomware indicator)
+            op_type = event.get("op_type")
+            if op_type in (OP_OPEN, OP_CLOSE):
+                fd_type = event.get("fd_type")
+                if fd_type == FD_TYPE_FILE and subgraph.number_of_nodes() > 8:
+                    graph_heuristics.append("mass_file_ops")
+
+            # detect unusual pipe/anonymous fd usage
+            if event.get("fd_type") in (FD_TYPE_PIPE,):
+                graph_heuristics.append("pipe_usage")
+
+            # ── scoring ───────────────────────────────────────
+            alert = scoring.compute_score(
+                event=event,
+                stat_report=stat_report,
+                sig_match=sig_match,
+                graph_heuristics=graph_heuristics,
+            )
+            if alert:
+                storage.save_alert(alert)
+                print(f"\N{POLICE CARS REVOLVING LIGHT} ALERT: "
+                      f"PID {event['pid']} [{event.get('comm','?')}] "
+                      f"op={event.get('op_name','?')} "
+                      f"SCORE {alert.score} "
+                      f"{alert.severity}", flush=True)
+
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        agent.stop()
+
 
 if __name__ == "__main__":
     run_agent()
