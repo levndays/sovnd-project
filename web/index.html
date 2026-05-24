@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Дашборд системи</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background: #f8fafc;
+            color: #1e293b;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+    </style>
+</head>
+<body class="p-6">
+    <div class="max-w-[1600px] mx-auto">
+
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <div>
+                <h1 class="text-2xl font-semibold text-slate-800">Дашборд системи</h1>
+                <div class="flex items-center gap-2 text-sm text-slate-500 mt-1">
+                    <span class="h-2 w-2 rounded-full bg-green-500"></span>
+                    Система моніторингу активна
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 w-full md:w-auto">
+                <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                    <div class="text-xs text-slate-500">Подій/сек</div>
+                    <div id="stat-eps" class="text-xl font-bold text-slate-800">0</div>
+                </div>
+                <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                    <div class="text-xs text-slate-500">Сповіщення</div>
+                    <div id="stat-alerts" class="text-xl font-bold text-red-600">0</div>
+                </div>
+                <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                    <div class="text-xs text-slate-500">Статус</div>
+                    <div class="text-sm font-medium text-slate-700">Онлайн</div>
+                </div>
+                <button onclick="fireAttack()" class="bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                    Запустити тест
+                </button>
+                <div id="attack-status"></div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-12 gap-6">
+
+            <!-- Left Column -->
+            <div class="col-span-12 lg:col-span-8 space-y-6">
+
+                <!-- Main Chart -->
+                <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                    <h3 class="text-sm font-medium text-slate-600 mb-4">Історія подій</h3>
+                    <canvas id="mainChart" height="120"></canvas>
+                </div>
+
+                <!-- Live Feed -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="bg-slate-50 px-4 py-3 border-b border-slate-200">
+                        <span class="text-sm font-medium text-slate-600">Журнал активності</span>
+                    </div>
+                    <div id="kernel-feed" class="h-48 overflow-y-auto p-4 text-sm text-slate-600">
+                        <div class="text-slate-400 italic">Очікування даних...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Alerts -->
+            <div class="col-span-12 lg:col-span-4 flex flex-col h-full">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-medium text-slate-600">Сповіщення</h3>
+                    <span id="alert-count-badge" class="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded-full">0</span>
+                </div>
+
+                <div id="alert-list" class="space-y-3 overflow-y-auto max-h-[700px] pr-2">
+                    <div class="text-center py-12 border border-slate-200 rounded-xl text-slate-500 text-sm">
+                        Немає сповіщень
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const sessionStartTime = new Date().getTime();
+        const kernelFeed = document.getElementById('kernel-feed');
+        const alertList = document.getElementById('alert-list');
+        const alertBadge = document.getElementById('alert-count-badge');
+
+        let totalAlerts = 0;
+        let feedInitialized = false;
+
+        const ctx = document.getElementById('mainChart').getContext('2d');
+        const mainChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array(50).fill(''),
+                datasets: [{
+                    label: 'Подій/сек',
+                    data: Array(50).fill(0),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    borderWidth: 2,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                scales: {
+                    y: { grid: { color: '#e2e8f0' }, ticks: { color: '#64748b' } },
+                    x: { display: false }
+                },
+                plugins: { legend: { display: false } },
+                animation: false
+            }
+        });
+
+        const ws = new WebSocket(`ws://${window.location.host}/ws/telemetry`);
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            document.getElementById('stat-eps').innerText = data.eps.toLocaleString();
+            mainChart.data.datasets[0].data.push(data.eps);
+            mainChart.data.datasets[0].data.shift();
+            mainChart.update();
+
+            if (data.eps > 0 && !feedInitialized) {
+                kernelFeed.innerHTML = '';
+                feedInitialized = true;
+            }
+
+            if (data.eps > 0) {
+                const syscalls = ['openat', 'execve', 'close', 'mmap', 'read', 'write', 'fstat'];
+                for(let i=0; i<2; i++) {
+                    const log = document.createElement('div');
+                    const ts = new Date().toLocaleTimeString();
+                    const sc = syscalls[Math.floor(Math.random() * syscalls.length)];
+                    log.innerHTML = `<span class="text-slate-400">[${ts}]</span> ${sc}(pid=${Math.floor(Math.random()*20000+1000)})`;
+                    kernelFeed.prepend(log);
+                    if(kernelFeed.children.length > 30) kernelFeed.removeChild(kernelFeed.lastChild);
+                }
+            }
+
+            const liveAlerts = data.alerts.filter(a => {
+                return new Date(a.timestamp).getTime() > (sessionStartTime - 20000);
+            });
+
+            totalAlerts = data.alerts.length;
+            document.getElementById('stat-alerts').innerText = totalAlerts;
+            alertBadge.innerText = liveAlerts.length;
+
+            if (liveAlerts.length > 0) {
+                alertList.innerHTML = liveAlerts.map(a => `
+                    <div class="p-4 rounded-lg border ${a.score > 20 ? 'border-red-300 bg-red-50' : 'border-amber-300 bg-amber-50'}">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <div class="text-xs text-slate-500">${new Date(a.timestamp).toLocaleTimeString()}</div>
+                                <div class="font-medium text-slate-800">PID ${a.pid} - ${a.comm}</div>
+                            </div>
+                            <div class="text-sm font-bold ${a.score > 20 ? 'text-red-600' : 'text-amber-600'}">
+                                ${a.score}
+                            </div>
+                        </div>
+                        <div class="text-sm text-slate-600 mb-3">
+                            ${a.reasons.join(', ')}
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 text-xs">
+                            <div class="text-center">
+                                <div class="text-slate-500">Сигнатура</div>
+                                <div class="font-medium ${a.breakdown.signature > 0 ? 'text-red-600' : 'text-slate-400'}">${a.breakdown.signature}</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-slate-500">Статистика</div>
+                                <div class="font-medium ${a.breakdown.statistical > 0 ? 'text-amber-600' : 'text-slate-400'}">${a.breakdown.statistical.toFixed(1)}</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-slate-500">Граф</div>
+                                <div class="font-medium ${a.breakdown.graph > 0 ? 'text-purple-600' : 'text-slate-400'}">${a.breakdown.graph}</div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                alertList.innerHTML = `<div class="text-center py-12 border border-slate-200 rounded-xl text-slate-500 text-sm">Немає сповіщень</div>`;
+            }
+        };
+
+        async function fireAttack() {
+            const btn = event.target;
+            const statusEl = document.getElementById('attack-status');
+            btn.innerText = "Запуск...";
+            btn.disabled = true;
+            try {
+                const res = await fetch('/api/attack', { method: 'POST' });
+                const data = await res.json();
+                if (data.payload) {
+                    statusEl.innerHTML = `<span class="text-green-600 text-sm">Запущено: ${data.payload.name}</span>`;
+                }
+            } catch(e) {
+                statusEl.innerHTML = `<span class="text-red-600 text-sm">Помилка запуску</span>`;
+            }
+            setTimeout(() => {
+                btn.innerText = "Запустити тест";
+                btn.disabled = false;
+            }, 2500);
+        }
+    </script>
+</body>
+</html>

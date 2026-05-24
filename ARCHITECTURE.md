@@ -504,33 +504,26 @@ When running `sudo python3 demo.py start`:
 
 ```
 sovnd-project/
-├── ebpf/
-│   ├── tracer.bpf.c      # eBPF program
-│   ├── tracer.skel.h     # Generated skeleton
-│   └── Makefile         # Build rules
-├── src/
-│   ├── ebpf_agent.py    # Python ↔ eBPF bridge
-│   ├── main_agent.py   # Main loop + scoring
-│   ├── detector/
-│   │   ├── signature.py    # IOC matching
-│   │   └── statistical.py # Z-score detection
-│   ├── metrics/
-│   │   └── engine.py   # EWMA profiles
-│   ├── graph/
-│   │   └── builder.py # Provenance graph
-│   ├── scoring/
-│   │   └── engine.py # Weighted scoring
-│   ├── storage/
-│   │   └── sqlite.py # Alert persistence
-│   └── api/
-│       └── main.py   # FastAPI server
-├── static/
-│   └── index.html  # Dashboard UI
-├── data/
-│   ├── sovnd.db     # Alert database
-│   └── heartbeat.json # Throughput metric
-├── demo.py          # Orchestrator
-└── README.md
+├── apps/               # Entry points
+│   ├── agent.py        # Main engine
+│   ├── server.py       # API server
+│   └── demo.py         # Demo orchestrator
+├── core/               # Detection logic
+│   ├── detection/      # Signature/Statistical
+│   ├── graph/          # Provenance graph
+│   ├── metrics/        # EWMA engine
+│   └── scoring/        # Scoring engine
+├── drivers/            # Kernel interfaces
+│   └── ebpf/           # eBPF source & bridge
+├── internal/           # Infrastructure
+│   ├── container/      # Docker resolver
+│   └── storage/        # SQLite persistence
+├── web/                # Frontend assets
+│   └── index.html      # Dashboard
+├── scripts/            # Utils & Attacks
+├── tests/              # unit/ & integration/
+├── data/               # Persistent storage
+└── ARCHITECTURE.md
 ```
 
 ---
