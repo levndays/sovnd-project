@@ -91,13 +91,13 @@ class TestProvenanceGraphBuilder:
         
         assert len(subgraph.nodes()) == 0
 
-    def test_get_serialized_graph_format(self):
-        """Test get_serialized_graph returns valid node_link_data format."""
+    def test_serialized_graph_format(self):
+        """Test serialized returns valid node_link_data format."""
         builder = ProvenanceGraphBuilder()
         event = {"pid": 123, "comm": "bash", "filename": "/etc/passwd", "syscall_id": 2}
         builder.add_event(event)
         
-        serialized = builder.get_serialized_graph()
+        serialized = builder.serialized()
         
         assert "nodes" in serialized
         assert "links" in serialized or "edges" in serialized
@@ -110,5 +110,5 @@ class TestProvenanceGraphBuilder:
         
         builder.clear()
         
-        assert len(builder.graph.nodes()) == 0
-        assert len(builder.graph.edges()) == 0
+        assert len(builder._graph.nodes()) == 0
+        assert len(builder._graph.edges()) == 0

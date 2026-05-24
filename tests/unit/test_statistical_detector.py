@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from core.config import Settings
 from core.detection.statistical import StatisticalDetector
 from core.metrics.engine import MetricsEngine
 
@@ -23,7 +24,8 @@ class TestStatisticalDetectorInit:
 
     def test_custom_threshold(self):
         engine = MetricsEngine()
-        detector = StatisticalDetector(engine, threshold_z=5.0)
+        settings = Settings(z_threshold=5.0)
+        detector = StatisticalDetector(engine, settings=settings)
         assert detector.threshold_z == 5.0
 
     def test_engine_reference_stored(self):
@@ -52,10 +54,10 @@ class TestStatisticalDetectorEvaluate:
 
     def test_severity_mapping(self):
         engine = MetricsEngine()
-        detector = StatisticalDetector(engine, threshold_z=3.0)
-        assert detector._map_to_severity(1.0) == "info"
-        assert detector._map_to_severity(3.5) == "warning"
-        assert detector._map_to_severity(250.0) == "critical"
+        detector = StatisticalDetector(engine)
+        assert detector._severity(1.0) == "info"
+        assert detector._severity(3.5) == "warning"
+        assert detector._severity(250.0) == "critical"
 
     def test_z_below_threshold_not_anomalous(self):
         engine = MetricsEngine(alpha=1.0)

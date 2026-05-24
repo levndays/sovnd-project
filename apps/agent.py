@@ -28,7 +28,7 @@ def run_agent():
     scoring = ScoringEngine(threshold=15.0)
     storage = StorageManager()
     metrics_engine = MetricsEngine(alpha=0.3, n_gram_size=3)
-    stat_detector = StatisticalDetector(engine=metrics_engine, threshold_z=3.0)
+    stat_detector = StatisticalDetector(engine=metrics_engine)
     graph_builder = ProvenanceGraphBuilder()
 
     storage.clear_alerts()
@@ -62,7 +62,7 @@ def run_agent():
             stat_report = stat_detector.evaluate(pid, current_vec)
 
             # ── signature ─────────────────────────────────────
-            sig_match = sig_detector.analyze_event(event)
+            sig_match = sig_detector.analyze(event)
 
             # ── graph ─────────────────────────────────────────
             graph_heuristics = []
@@ -87,7 +87,7 @@ def run_agent():
                 graph_heuristics.append("pipe_usage")
 
             # ── scoring ───────────────────────────────────────
-            alert = scoring.compute_score(
+            alert = scoring.compute(
                 event=event,
                 stat_report=stat_report,
                 sig_match=sig_match,

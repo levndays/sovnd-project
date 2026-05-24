@@ -53,7 +53,7 @@ class TestSignatureDetectorCriticalPaths:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/shadow", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
         assert result["type"] == "SIGNATURE_MATCH"
@@ -67,7 +67,7 @@ class TestSignatureDetectorCriticalPaths:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/sudoers", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
         assert result["type"] == "SIGNATURE_MATCH"
@@ -80,7 +80,7 @@ class TestSignatureDetectorCriticalPaths:
         detector = SignatureDetector()
         
         event = {"filename": "/var/run/docker.sock", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
         assert result["type"] == "SIGNATURE_MATCH"
@@ -93,7 +93,7 @@ class TestSignatureDetectorCriticalPaths:
         detector = SignatureDetector()
         
         event = {"filename": "/root/.ssh/id_rsa", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
 
@@ -105,7 +105,7 @@ class TestSignatureDetectorCriticalPaths:
         detector = SignatureDetector()
         
         event = {"filename": "/proc/kcore", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
 
@@ -117,7 +117,7 @@ class TestSignatureDetectorCriticalPaths:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/passwd", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -133,7 +133,7 @@ class TestSignatureDetectorSuspiciousComm:
         detector = SignatureDetector()
         
         event = {"filename": "/bin/bash", "comm": "bash"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
         assert result["type"] == "HEURISTIC_MATCH"
@@ -146,7 +146,7 @@ class TestSignatureDetectorSuspiciousComm:
         detector = SignatureDetector()
         
         event = {"filename": "/bin/sh", "comm": "sh"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
         assert result["type"] == "HEURISTIC_MATCH"
@@ -159,7 +159,7 @@ class TestSignatureDetectorSuspiciousComm:
         detector = SignatureDetector()
         
         event = {"filename": "/usr/bin/nc", "comm": "nc"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
         assert result["severity"] == "warning"
@@ -172,7 +172,7 @@ class TestSignatureDetectorSuspiciousComm:
         detector = SignatureDetector()
         
         event = {"filename": "/usr/bin/ncat", "comm": "ncat"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
 
@@ -184,7 +184,7 @@ class TestSignatureDetectorSuspiciousComm:
         detector = SignatureDetector()
         
         event = {"filename": "/usr/bin/python3", "comm": "python"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
 
@@ -196,7 +196,7 @@ class TestSignatureDetectorSuspiciousComm:
         detector = SignatureDetector()
         
         event = {"filename": "/usr/bin/perl", "comm": "perl"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
 
@@ -208,7 +208,7 @@ class TestSignatureDetectorSuspiciousComm:
         detector = SignatureDetector()
         
         event = {"filename": "/bin/nginx", "comm": "nginx"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -224,7 +224,7 @@ class TestSignatureDetectorEdgeCases:
         detector = SignatureDetector()
         
         event = {}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -236,7 +236,7 @@ class TestSignatureDetectorEdgeCases:
         detector = SignatureDetector()
         
         event = {"filename": "", "comm": "bash"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -248,7 +248,7 @@ class TestSignatureDetectorEdgeCases:
         detector = SignatureDetector()
         
         event = {"filename": None, "comm": "bash"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -260,7 +260,7 @@ class TestSignatureDetectorEdgeCases:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/shadow"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
 
@@ -272,7 +272,7 @@ class TestSignatureDetectorEdgeCases:
         detector = SignatureDetector()
         
         event = {"comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -284,7 +284,7 @@ class TestSignatureDetectorEdgeCases:
         detector = SignatureDetector()
         
         event = {"filename": "///etc///shadow", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -296,7 +296,7 @@ class TestSignatureDetectorEdgeCases:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/../etc/shadow", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -312,7 +312,7 @@ class TestSignatureDetectorReturnValues:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/shadow", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert "type" in result
         assert "reason" in result
@@ -327,7 +327,7 @@ class TestSignatureDetectorReturnValues:
         detector = SignatureDetector()
         
         event = {"filename": "/bin/bash", "comm": "bash"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert "type" in result
         assert "reason" in result
@@ -341,7 +341,7 @@ class TestSignatureDetectorReturnValues:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/shadow", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result["severity"] in ["info", "warning", "critical"]
 
@@ -357,7 +357,7 @@ class TestSignatureDetectorPriority:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/shadow", "comm": "bash"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result["type"] == "SIGNATURE_MATCH"
         assert result["severity"] == "critical"
@@ -374,7 +374,7 @@ class TestSignatureDetectorIOCFields:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/shadow", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result["ioc"] == "/etc/shadow"
 
@@ -386,7 +386,7 @@ class TestSignatureDetectorIOCFields:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/sudoers", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result["ioc"] == "/etc/sudoers"
 
@@ -398,7 +398,7 @@ class TestSignatureDetectorIOCFields:
         detector = SignatureDetector()
         
         event = {"filename": "/var/run/docker.sock", "comm": "test"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result["ioc"] == "/var/run/docker.sock"
 
@@ -414,7 +414,7 @@ class TestSignatureDetectorRealWorld:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/passwd", "comm": "cat"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -426,7 +426,7 @@ class TestSignatureDetectorRealWorld:
         detector = SignatureDetector()
         
         event = {"filename": "/etc/cron.d", "comm": "cron"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is None
 
@@ -438,7 +438,7 @@ class TestSignatureDetectorRealWorld:
         detector = SignatureDetector()
         
         event = {"filename": "/bin/bash", "comm": "bash"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
         assert result["severity"] == "warning"
@@ -451,6 +451,6 @@ class TestSignatureDetectorRealWorld:
         detector = SignatureDetector()
         
         event = {"filename": "/bin/bash", "comm": "nc"}
-        result = detector.analyze_event(event)
+        result = detector.analyze(event)
         
         assert result is not None
