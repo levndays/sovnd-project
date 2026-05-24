@@ -242,7 +242,8 @@
                 attackEvents = attackEvents.filter(t => Date.now() - t < 30000);
 
                 indicator.classList.remove('hidden');
-                indicator.innerText = `⚡ ${data.payload?.name || 'Attack'} launched`;
+                const scoreInfo = data.payload?.expected_score ? ` (expected ~${data.payload.expected_score})` : '';
+                indicator.innerText = `⚡ ${data.payload?.name || 'Attack'} launched${scoreInfo}`;
                 setTimeout(() => indicator.classList.add('hidden'), 4000);
             } catch (err) {
                 indicator.classList.remove('hidden');

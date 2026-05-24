@@ -57,7 +57,11 @@ class ScoringEngine:
 
         # ── signature ──────────────────────────────────────
         if sig_match:
-            comp["signature"] = self.weights["signature"]
+            sig_type = sig_match.get("type", "")
+            if sig_type == "SIGNATURE_MATCH":
+                comp["signature"] = self.weights["signature"]  # 15.0 — IOC match
+            else:
+                comp["signature"] = 8.0  # suspicious command, lower confidence
             reasons.append(sig_match["reason"])
 
         # ── statistical ────────────────────────────────────
@@ -65,10 +69,20 @@ class ScoringEngine:
         if stat_report.get("is_anomalous"):
             comp["statistical"] = self.weights["statistical"] * max_z
             reasons.append(f"Statistical Anomaly (Z={max_z:.1f})")
+        elif stat_report.get("euclidean_distance", 0) > 10:
+            comp["statistical"] = min(5.0, stat_report["euclidean_distance"] * 0.1)
+            reasons.append("Cold-start activity spike")
 
         # ── graph ──────────────────────────────────────────
+        weights = {
+            "high_connectivity": 3.0,
+            "sensitive_access": 5.0,
+            "mass_file_ops": 7.0,
+            "pipe_usage": 3.0,
+        }
         for heuristic in (graph_heuristics or []):
-            comp["graph"] += self.weights["graph"]
+            w = weights.get(heuristic, self.weights["graph"])
+            comp["graph"] += w
             reasons.append(f"Graph Heuristic: {heuristic}")
 
         total = round(sum(comp.values()), 2)

@@ -20,7 +20,8 @@ from core.scoring.engine import ScoringEngine
 from core.graph.builder import ProvenanceGraphBuilder
 from internal.storage.sqlite import StorageManager
 
-NOISE_COMMANDS = {"sudo", "unix_chkpwd", "polkitd", "dbus-daemon"}
+NOISE_COMMANDS = {"sudo", "unix_chkpwd", "polkitd", "dbus-daemon", "systemd-logind",
+                  "systemd", "sshd", "cron", "systemd-tmpfile", "systemd-machine"}
 
 
 def run_agent():

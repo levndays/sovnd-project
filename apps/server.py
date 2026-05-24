@@ -2,7 +2,6 @@ import asyncio
 import json
 import sys
 import time
-import random
 import subprocess
 from pathlib import Path
 
@@ -121,50 +120,58 @@ async def trigger_attack():
         {
             "name": "Shadow File Access",
             "type": "signature",
+            "expected_score": 15,
             "cmd": "cat /etc/shadow",
-            "description": "Reads password hashes — signature IOC match"
+            "description": "sig=15 — critical file IOC match"
         },
         {
             "name": "Sudoers Tampering",
             "type": "signature",
+            "expected_score": 15,
             "cmd": "cat /etc/sudoers",
-            "description": "Reads sudo config — signature IOC match"
+            "description": "sig=15 — critical file IOC match"
         },
         {
             "name": "SSH Key Theft",
-            "type": "signature",
-            "cmd": "cat /root/.ssh/id_rsa 2>/dev/null; ls /root/.ssh/ 2>/dev/null",
-            "description": "Tries to steal SSH private keys"
+            "type": "signature+graph",
+            "expected_score": 20,
+            "cmd": "cat /root/.ssh/id_rsa 2>/dev/null; ls /root/.ssh/ 2>/dev/null; ls /root/ 2>/dev/null",
+            "description": "sig=15 + graph=5 — root access + sensitive path"
         },
         {
-            "name": "Docker Socket Breach",
-            "type": "signature",
-            "cmd": "cat /var/run/docker.sock 2>/dev/null || echo 'no docker'",
-            "description": "Accesses Docker socket — container escape"
+            "name": "Docker Escape Attempt",
+            "type": "signature+graph",
+            "expected_score": 20,
+            "cmd": "cat /var/run/docker.sock 2>/dev/null; ls /var/run/ 2>/dev/null || echo 'no-docker'",
+            "description": "sig=15 + graph=5 — docker socket + var access"
         },
         {
-            "name": "File Storm (Ransomware)",
-            "type": "statistical+graph",
-            "cmd": "bash -c 'for i in $(seq 1 400); do echo x > /tmp/encrypt_$i; done; rm -f /tmp/encrypt_*'",
-            "description": "Creates 400 files rapidly — ransomware-like behavior"
+            "name": "Shadow + Sudoers Exfil",
+            "type": "signature+graph",
+            "expected_score": 28,
+            "cmd": "cat /etc/shadow; cat /etc/sudoers; ls /etc/ 2>/dev/null | head -5",
+            "description": "sig=15 + graph=5+8 — dual IOC + etc scan"
+        },
+        {
+            "name": "Ransomware Simulation",
+            "type": "graph",
+            "expected_score": 15,
+            "cmd": "bash -c 'for i in $(seq 1 200); do echo x > /tmp/encrypt_$i; done; rm -f /tmp/encrypt_*'",
+            "description": "graph=15 — 200 file creates → mass_file_ops + connectivity"
         },
         {
             "name": "Reconnaissance Scan",
             "type": "graph",
+            "expected_score": 8,
             "cmd": "find /etc -type f -name '*.conf' -exec ls -la {} \\; 2>/dev/null | head -40",
-            "description": "Enumerates config files — lateral movement recon"
-        },
-        {
-            "name": "Credential Dump + Storm",
-            "type": "signature+statistical",
-            "cmd": "cat /etc/shadow && bash -c 'for i in $(seq 1 300); do echo $i > /tmp/dump$i; done'",
-            "description": "Reads shadow + file burst — credential dumping"
+            "description": "graph=8 — config enumeration → sensitive+connectivity"
         },
         {
             "name": "Full Killchain",
             "type": "all",
-            "cmd": "cat /etc/shadow >/dev/null 2>&1; bash -c 'for i in $(seq 1 200); do echo $i > /tmp/a$i; done'; find /root /etc -type f 2>/dev/null | head -15",
-            "description": "Signature + statistical + graph — full attack chain"
+            "expected_score": 25,
+            "cmd": "cat /etc/shadow >/dev/null 2>&1; bash -c 'for i in $(seq 1 200); do echo $i > /tmp/a$i; done' 2>/dev/null; find /root /etc -type f 2>/dev/null | head -15",
+            "description": "sig=15 + graph=10 — shadow + file burst + root scan"
         },
     ]
 
@@ -177,6 +184,7 @@ async def trigger_attack():
         "payload": {
             "name": selected["name"],
             "type": selected["type"],
-            "description": selected["description"]
+            "description": selected["description"],
+            "expected_score": selected["expected_score"]
         }
     }

@@ -69,7 +69,7 @@ class ProvenanceGraphBuilder:
             result.append("high_connectivity")
 
         fname = str(event.get("filename") or "")
-        if any(fname.startswith(p) for p in ("/etc", "/root", "/var/run")):
+        if any(fname.startswith(p) for p in ("/etc", "/root", "/var/run", "/var", "/opt")):
             result.append("sensitive_access")
 
         fd_type = event.get("fd_type")

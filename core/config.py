@@ -32,8 +32,8 @@ class ScoringWeights:
 @dataclass(frozen=True)
 class Settings:
     # ── scoring ──────────────────────────────────────────────
-    score_threshold:    float = 18.0
-    score_critical:     float = 20.0     # severity ≥ this → critical
+    score_threshold:    float = 14.0
+    score_critical:     float = 22.0     # severity ≥ this → critical
     weights:            ScoringWeights = field(default_factory=ScoringWeights)
 
     # ── statistical ──────────────────────────────────────────
