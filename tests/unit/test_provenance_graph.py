@@ -106,5 +106,5 @@ class TestProvenanceGraphBuilder:
         
         builder.clear()
         
-        assert len(builder._graph.nodes()) == 0
-        assert len(builder._graph.edges()) == 0
+        assert len(builder.graph.nodes()) == 0
+        assert len(builder.graph.edges()) == 0

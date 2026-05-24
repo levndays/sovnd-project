@@ -31,6 +31,14 @@ class SignatureDetector:
         self._critical_paths = critical_paths or CRITICAL_PATH_PATTERNS
         self._suspicious = suspicious_commands or SUSPICIOUS_COMMANDS
 
+    @property
+    def critical_paths(self) -> List[Pattern]:
+        return self._critical_paths
+
+    @property
+    def suspicious_comm(self) -> List[str]:
+        return self._suspicious
+
     # ── public API ───────────────────────────────────────────
 
     def analyze(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:

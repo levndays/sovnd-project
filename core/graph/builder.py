@@ -28,6 +28,11 @@ class ProvenanceGraphBuilder:
         self._bulk_thresh     = cfg.graph_bulk_file_ops_nodes
         logger.info("ProvenanceGraphBuilder initialised")
 
+    @property
+    def graph(self) -> nx.DiGraph:
+        """Read-only access to the underlying NetworkX graph."""
+        return self._graph
+
     # ── public API ───────────────────────────────────────────
 
     def add_event(self, event: Dict[str, Any]) -> None:

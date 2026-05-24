@@ -77,7 +77,7 @@ class TestEWMASnapshot:
     def test_snapshot_triggers_after_one_second(self):
         engine = MetricsEngine(settings=Settings(ewma_alpha=1.0))
         base = time.time()
-        with patch("time.time", side_effect=[base, base, base + 1.1]):
+        with patch("time.time", side_effect=[base, base, base, base + 1.1]):
             engine.update(self.make_event(pid=1, op_type=1))
             engine.update(self.make_event(pid=1, op_type=1))
             engine.update(self.make_event(pid=1, op_type=1))
@@ -104,7 +104,7 @@ class TestEWMASnapshot:
     def test_z_scores_returns_list(self):
         engine = MetricsEngine(settings=Settings(ewma_alpha=1.0))
         base = time.time()
-        with patch("time.time", side_effect=[base, base + 1.1]):
+        with patch("time.time", side_effect=[base, base, base + 1.1]):
             engine.update(self.make_event(pid=1, op_type=1))
             engine.update(self.make_event(pid=1, op_type=1))
         z = engine.get_z_scores(1, engine.get_current_vector(1))
