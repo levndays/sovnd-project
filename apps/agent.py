@@ -20,6 +20,8 @@ from core.scoring.engine import ScoringEngine
 from core.graph.builder import ProvenanceGraphBuilder
 from internal.storage.sqlite import StorageManager
 
+NOISE_COMMANDS = {"sudo", "unix_chkpwd", "polkitd", "dbus-daemon"}
+
 
 def run_agent():
     print("\N{SHIELD} Starting SovND Real-time eBPF Engine...")
@@ -79,6 +81,9 @@ def run_agent():
                 graph_heuristics=graph_heuristics,
             )
             if alert:
+                comm = str(event.get("comm", ""))
+                if comm in NOISE_COMMANDS:
+                    continue
                 storage.save_alert(asdict(alert))
                 print(f"\N{POLICE CARS REVOLVING LIGHT} ALERT: "
                       f"PID {event['pid']} [{event.get('comm','?')}] "

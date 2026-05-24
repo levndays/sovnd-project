@@ -110,105 +110,73 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
 
+_attack_cycle = -1
+
 @app.post("/api/attack")
 async def trigger_attack():
+    global _attack_cycle
+    _attack_cycle += 1
+
     payloads = [
         {
-            "type": "signature",
             "name": "Shadow File Access",
+            "type": "signature",
             "cmd": "cat /etc/shadow",
-            "expected_reason": "Access to critical file: /etc/shadow",
-            "description": "Attempts to read /etc/shadow for password hashes"
+            "description": "Reads password hashes — signature IOC match"
         },
         {
+            "name": "Sudoers Tampering",
             "type": "signature",
-            "name": "Sudoers Access",
             "cmd": "cat /etc/sudoers",
-            "expected_reason": "Access to critical file: /etc/sudoers",
-            "description": "Attempts to read sudo configuration"
+            "description": "Reads sudo config — signature IOC match"
         },
         {
-            "type": "signature",
-            "name": "Docker Socket Access",
-            "cmd": "cat /var/run/docker.sock",
-            "expected_reason": "Access to critical file: /var/run/docker.sock",
-            "description": "Attempts to access Docker socket"
-        },
-        {
-            "type": "signature",
             "name": "SSH Key Theft",
-            "cmd": "cat /root/.ssh/id_rsa 2>/dev/null || echo no-key",
-            "expected_reason": "Access to critical file: /root/.ssh",
-            "description": "Attempts to steal SSH private keys"
+            "type": "signature",
+            "cmd": "cat /root/.ssh/id_rsa 2>/dev/null; ls /root/.ssh/ 2>/dev/null",
+            "description": "Tries to steal SSH private keys"
         },
         {
-            "type": "statistical",
-            "name": "File Creation Storm",
-            "cmd": "bash -c 'for i in $(seq 1 500); do echo x > /tmp/f$i; done' && rm -f /tmp/f*",
-            "expected_reason": "Statistical Anomaly",
-            "description": "Creates burst of file creates to trigger anomaly detection"
+            "name": "Docker Socket Breach",
+            "type": "signature",
+            "cmd": "cat /var/run/docker.sock 2>/dev/null || echo 'no docker'",
+            "description": "Accesses Docker socket — container escape"
         },
         {
-            "type": "statistical",
-            "name": "Process Spawn Storm",
-            "cmd": "bash -c 'for i in $(seq 1 200); do sleep 0.01 & done'",
-            "expected_reason": "Statistical Anomaly",
-            "description": "Spawns many processes rapidly"
+            "name": "File Storm (Ransomware)",
+            "type": "statistical+graph",
+            "cmd": "bash -c 'for i in $(seq 1 400); do echo x > /tmp/encrypt_$i; done; rm -f /tmp/encrypt_*'",
+            "description": "Creates 400 files rapidly — ransomware-like behavior"
         },
         {
-            "type": "graph",
             "name": "Reconnaissance Scan",
-            "cmd": "find /etc -type f -name '*.conf' -exec ls -la {} \\; 2>/dev/null | head -30",
-            "expected_reason": "Graph Heuristic",
-            "description": "Scans many config files triggering graph connections"
-        },
-        {
             "type": "graph",
-            "name": "Recursive Directory Traverse",
-            "cmd": "ls -laR /var /opt /home 2>/dev/null | head -100",
-            "expected_reason": "Graph Heuristic",
-            "description": "Recursively traverses directories creating graph edges"
+            "cmd": "find /etc -type f -name '*.conf' -exec ls -la {} \\; 2>/dev/null | head -40",
+            "description": "Enumerates config files — lateral movement recon"
         },
         {
-            "type": "signature+graph",
-            "name": "Sensitive Config Exfiltration",
-            "cmd": "cat /etc/passwd /etc/shadow && find /etc -name '*.conf' 2>/dev/null | head -5",
-            "expected_reason": "multiple",
-            "description": "Combines signature file access with graph enumeration"
-        },
-        {
+            "name": "Credential Dump + Storm",
             "type": "signature+statistical",
-            "name": "Credentials Dumping",
             "cmd": "cat /etc/shadow && bash -c 'for i in $(seq 1 300); do echo $i > /tmp/dump$i; done'",
-            "expected_reason": "multiple",
-            "description": "Reads shadow file plus creates file storm"
+            "description": "Reads shadow + file burst — credential dumping"
         },
         {
-            "type": "graph+statistical",
-            "name": "Network Recon Storm",
-            "cmd": "bash -c 'for h in $(seq 1 50); do ping -c 1 127.0.0.$h 2>/dev/null; done' && ls -la /etc /var",
-            "expected_reason": "multiple",
-            "description": "Creates network activity + file access patterns"
-        },
-        {
-            "type": "all_three",
-            "name": "FullAttack Exfiltration",
-            "cmd": "cat /etc/shadow >/dev/null 2>&1; bash -c 'for i in $(seq 1 400); do echo $i > /tmp/a$i; done'; find /root /etc -type f 2>/dev/null | head -10",
-            "expected_reason": "multiple",
-            "description": "Maximum signature + statistical + graph detection"
+            "name": "Full Killchain",
+            "type": "all",
+            "cmd": "cat /etc/shadow >/dev/null 2>&1; bash -c 'for i in $(seq 1 200); do echo $i > /tmp/a$i; done'; find /root /etc -type f 2>/dev/null | head -15",
+            "description": "Signature + statistical + graph — full attack chain"
         },
     ]
-    
-    selected = random.choice(payloads)
+
+    selected = payloads[_attack_cycle % len(payloads)]
     cmd = selected["cmd"]
     subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
+
     return {
         "status": "attack_launched",
         "payload": {
             "name": selected["name"],
             "type": selected["type"],
-            "description": selected["description"],
-            "expected_reason": selected["expected_reason"]
+            "description": selected["description"]
         }
     }
