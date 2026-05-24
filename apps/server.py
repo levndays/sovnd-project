@@ -1,9 +1,12 @@
 import asyncio
 import json
+import sys
 import time
 import random
 import subprocess
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Response
 from fastapi.staticfiles import StaticFiles
