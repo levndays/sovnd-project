@@ -44,9 +44,8 @@ class TestEBPFMapValidation:
         assert "__u32" in maps_content, "Key type __u32 not found in maps"
 
     def test_proc_metrics_value_type(self, maps_content):
-        """Verify proc_metrics has correct value type (__u64 for counter)."""
-        assert "key, __u32" in maps_content or "key,__u32" in maps_content, "Key type not matching PID"
-        assert "value, __u64" in maps_content or "value,__u64" in maps_content, "Value type not matching counter"
+        """Verify proc_metrics has struct proc_stats value type."""
+        assert "proc_stats" in maps_content, "proc_stats struct reference not found"
 
     def test_proc_metrics_max_entries(self, maps_content):
         """Verify proc_metrics has reasonable max_entries."""
@@ -67,7 +66,7 @@ class TestEBPFMapValidation:
     def test_all_maps_have_sec_markers(self, maps_content):
         """Verify all maps have SEC(.maps) markers."""
         sec_markers = maps_content.count("SEC(\".maps\")")
-        assert sec_markers >= 3, f"Expected at least 3 SEC(.maps) markers, found {sec_markers}"
+        assert sec_markers >= 6, f"Expected at least 6 SEC(.maps) markers, found {sec_markers}"
 
     def test_maps_include_vmlinux(self, maps_content):
         """Verify maps include vmlinux.h."""

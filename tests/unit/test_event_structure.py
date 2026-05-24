@@ -31,9 +31,9 @@ class TestEventStructure:
         """Verify event struct has cgroup_id field."""
         assert re.search(r'__u64\s+cgroup_id', tracer_content), "cgroup_id field (__u64) not found"
 
-    def test_event_struct_has_syscall_id_field(self, tracer_content):
-        """Verify event struct has syscall_id field."""
-        assert re.search(r'__u32\s+syscall_id', tracer_content), "syscall_id field (__u32) not found"
+    def test_event_struct_has_op_type_field(self, tracer_content):
+        """Verify event struct has op_type field."""
+        assert re.search(r'__u32\s+op_type', tracer_content), "op_type field (__u32) not found in event struct"
 
     def test_event_struct_has_comm_field(self, tracer_content):
         """Verify event struct has comm field (process name)."""
@@ -67,13 +67,12 @@ class TestEventStructure:
         assert "struct event *e" in tracer_content, "Event pointer not created in trace_openat"
 
     def test_event_fields_populated(self, tracer_content):
-        """Verify event fields are populated in trace_openat."""
-        assert "e->pid" in tracer_content, "pid not assigned to event"
-        assert "e->tgid" in tracer_content, "tgid not assigned to event"
-        assert "e->cgroup_id" in tracer_content, "cgroup_id not assigned to event"
-        assert "e->syscall_id" in tracer_content, "syscall_id not assigned to event"
-        assert "e->comm" in tracer_content, "comm not assigned to event"
+        """Verify event fields are populated in trace_openat_exit."""
+        assert "e.pid" in tracer_content or "e->pid" in tracer_content, "pid not assigned to event"
+        assert "e.op_type" in tracer_content or "e->op_type" in tracer_content, "op_type not assigned"
+        assert "e.fd" in tracer_content or "e->fd" in tracer_content, "fd not assigned"
+        assert "e.comm" in tracer_content or "e->comm" in tracer_content, "comm not assigned"
 
-    def test_syscall_id_value(self, tracer_content):
-        """Verify syscall_id is set to openat (257)."""
-        assert "257" in tracer_content, "openat syscall number (257) not used"
+    def test_op_type_open_value(self, tracer_content):
+        """Verify OP_OPEN is used for openat events."""
+        assert "OP_OPEN" in tracer_content, "OP_OPEN constant not used"
