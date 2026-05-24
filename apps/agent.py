@@ -21,7 +21,9 @@ from core.graph.builder import ProvenanceGraphBuilder
 from internal.storage.sqlite import StorageManager
 
 NOISE_COMMANDS = {"sudo", "unix_chkpwd", "polkitd", "dbus-daemon", "systemd-logind",
-                  "systemd", "sshd", "cron", "systemd-tmpfile", "systemd-machine"}
+                  "systemd", "sshd", "cron", "systemd-tmpfile", "systemd-machine",
+                  "baloo_file_extr", "kwin_wayland", "ThreadPoolForeg", "ThreadPoolSingl",
+                  "CompositorTileW", "Chrome_IOThread", "kioworker"}
 
 
 def run_agent():

@@ -61,7 +61,7 @@ class ScoringEngine:
             if sig_type == "SIGNATURE_MATCH":
                 comp["signature"] = self.weights["signature"]  # 15.0 — IOC match
             else:
-                comp["signature"] = 8.0  # suspicious command, lower confidence
+                comp["signature"] = 5.0  # suspicious command, low confidence
             reasons.append(sig_match["reason"])
 
         # ── statistical ────────────────────────────────────

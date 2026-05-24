@@ -32,7 +32,7 @@ class ScoringWeights:
 @dataclass(frozen=True)
 class Settings:
     # ── scoring ──────────────────────────────────────────────
-    score_threshold:    float = 14.0
+    score_threshold:    float = 16.0
     score_critical:     float = 22.0     # severity ≥ this → critical
     weights:            ScoringWeights = field(default_factory=ScoringWeights)
 
@@ -44,7 +44,7 @@ class Settings:
     history_maxlen:     int   = 100
 
     # ── graph ─────────────────────────────────────────────────
-    graph_high_connectivity_nodes: int = 5
+    graph_high_connectivity_nodes: int = 10
     graph_bulk_file_ops_nodes:     int = 8
 
     # ── eBPF rate limiting ────────────────────────────────────
@@ -72,7 +72,7 @@ CRITICAL_PATH_PATTERNS: List[Pattern] = [
 ]
 
 SUSPICIOUS_COMMANDS: List[str] = [
-    "bash", "sh", "nc", "ncat", "python", "perl",
+    "nc", "ncat", "wget", "curl",
 ]
 
 
