@@ -119,59 +119,59 @@ async def trigger_attack():
     payloads = [
         {
             "name": "Shadow File Access",
-            "type": "signature",
+            "type": "sig only",
             "expected_score": 15,
-            "cmd": "cat /etc/shadow",
-            "description": "sig=15 — critical file IOC match"
+            "cmd": "cat /etc/shadow >/dev/null",
+            "description": "sig=15 — single IOC, baseline alert"
         },
         {
             "name": "Sudoers Tampering",
-            "type": "signature",
+            "type": "sig only",
             "expected_score": 15,
-            "cmd": "cat /etc/sudoers",
-            "description": "sig=15 — critical file IOC match"
+            "cmd": "cat /etc/sudoers >/dev/null",
+            "description": "sig=15 — single IOC, baseline alert"
         },
         {
             "name": "SSH Key Theft",
-            "type": "signature+graph",
-            "expected_score": 20,
+            "type": "sig+graph",
+            "expected_score": 23,
             "cmd": "cat /root/.ssh/id_rsa 2>/dev/null; ls /root/.ssh/ 2>/dev/null; ls /root/ 2>/dev/null",
-            "description": "sig=15 + graph=5 — root access + sensitive path"
+            "description": "sig=15 + graph=8 — root access scan"
         },
         {
-            "name": "Docker Escape Attempt",
-            "type": "signature+graph",
+            "name": "Docker Escape",
+            "type": "sig+graph",
             "expected_score": 20,
-            "cmd": "cat /var/run/docker.sock 2>/dev/null; ls /var/run/ 2>/dev/null || echo 'no-docker'",
-            "description": "sig=15 + graph=5 — docker socket + var access"
+            "cmd": "cat /var/run/docker.sock 2>/dev/null; ls /var/run/ 2>/dev/null",
+            "description": "sig=15 + graph=5 — docker socket access"
+        },
+        {
+            "name": "Ransomware Storm",
+            "type": "graph only",
+            "expected_score": 15,
+            "cmd": "bash -c 'for i in $(seq 1 300); do echo x > /tmp/victim_$i; done; rm -f /tmp/victim_*'",
+            "description": "graph=15 — 300 files → mass ops + connectivity"
+        },
+        {
+            "name": "Config Reconnaissance",
+            "type": "graph only",
+            "expected_score": 8,
+            "cmd": "find /etc -type f -name '*.conf' -exec ls -la {} \\; 2>/dev/null | head -40",
+            "description": "graph=8 — etc enumeration (below threshold)"
         },
         {
             "name": "Shadow + Sudoers Exfil",
-            "type": "signature+graph",
+            "type": "sig+graph",
             "expected_score": 28,
-            "cmd": "cat /etc/shadow; cat /etc/sudoers; ls /etc/ 2>/dev/null | head -5",
-            "description": "sig=15 + graph=5+8 — dual IOC + etc scan"
-        },
-        {
-            "name": "Ransomware Simulation",
-            "type": "graph",
-            "expected_score": 15,
-            "cmd": "bash -c 'for i in $(seq 1 200); do echo x > /tmp/encrypt_$i; done; rm -f /tmp/encrypt_*'",
-            "description": "graph=15 — 200 file creates → mass_file_ops + connectivity"
-        },
-        {
-            "name": "Reconnaissance Scan",
-            "type": "graph",
-            "expected_score": 8,
-            "cmd": "find /etc -type f -name '*.conf' -exec ls -la {} \\; 2>/dev/null | head -40",
-            "description": "graph=8 — config enumeration → sensitive+connectivity"
+            "cmd": "cat /etc/shadow >/dev/null; cat /etc/sudoers >/dev/null; ls /etc/ 2>/dev/null | head -10",
+            "description": "sig=15 + graph=13 — dual IOC + etc scan → critical"
         },
         {
             "name": "Full Killchain",
-            "type": "all",
-            "expected_score": 25,
-            "cmd": "cat /etc/shadow >/dev/null 2>&1; bash -c 'for i in $(seq 1 200); do echo $i > /tmp/a$i; done' 2>/dev/null; find /root /etc -type f 2>/dev/null | head -15",
-            "description": "sig=15 + graph=10 — shadow + file burst + root scan"
+            "type": "all three",
+            "expected_score": 30,
+            "cmd": "cat /etc/shadow >/dev/null; bash -c 'for i in $(seq 1 200); do echo $i > /tmp/kill_$i; done' 2>/dev/null; find /root /etc -type f 2>/dev/null | head -15",
+            "description": "sig=15 + graph=15 — shadow + file storm + root scan"
         },
     ]
 
