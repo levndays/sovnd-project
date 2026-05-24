@@ -20,6 +20,8 @@ DEFAULT_PID_DIR     = ".pids"
 DEFAULT_LOG_DIR     = ".logs"
 BPF_PIN_DIR         = "/sys/fs/bpf/sovnd"
 
+THREAT_LEVEL = os.environ.get("THREAT_LEVEL", "medium")  # low, medium, high
+
 
 # ── detection defaults ───────────────────────────────────────────
 
@@ -78,16 +80,12 @@ SUSPICIOUS_COMMANDS: List[str] = [
 
 # ── singleton ────────────────────────────────────────────────────
 
-_default = Settings()
+_level_thresholds = {"low": 20.0, "medium": 12.0, "high": 6.0}
+_default = Settings(score_threshold=_level_thresholds.get(THREAT_LEVEL, 12.0))
 
 
 def get_settings() -> Settings:
-    """Return the application-wide Settings singleton.
-
-    Override by calling ``set_settings(...)`` before app start.
-    """
     return _default
-
 
 def set_settings(s: Settings) -> None:
     global _default
