@@ -28,11 +28,11 @@ struct event {
     __u64 bytes;
     __u64 timestamp_ns;
     char comm[16];
-    char filename[256];
+    char filename[128];
 };
 
 struct pending_val {
-    char filename[256];
+    char filename[128];
     __u32 fd_type;
 };
 

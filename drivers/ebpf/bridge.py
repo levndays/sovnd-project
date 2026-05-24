@@ -19,7 +19,7 @@ class Event(ctypes.Structure):
         ("bytes",       ctypes.c_uint64),
         ("timestamp_ns",ctypes.c_uint64),
         ("comm",        ctypes.c_char * 16),
-        ("filename",    ctypes.c_char * 256),
+        ("filename",    ctypes.c_char * 128),
     ]
 
 OP_OPEN  = 1
