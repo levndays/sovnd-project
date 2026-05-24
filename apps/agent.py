@@ -2,6 +2,7 @@ import time
 import json
 import os
 import sys
+from dataclasses import asdict
 import logging
 from pathlib import Path
 
@@ -78,7 +79,7 @@ def run_agent():
                 graph_heuristics=graph_heuristics,
             )
             if alert:
-                storage.save_alert(alert)
+                storage.save_alert(asdict(alert))
                 print(f"\N{POLICE CARS REVOLVING LIGHT} ALERT: "
                       f"PID {event['pid']} [{event.get('comm','?')}] "
                       f"op={event.get('op_name','?')} "
