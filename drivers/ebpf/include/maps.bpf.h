@@ -4,10 +4,10 @@
 #include <bpf/bpf_helpers.h>
 
 enum {
-    OP_OPEN  = 1,
-    OP_CLOSE = 2,
-    OP_READ  = 3,
-    OP_WRITE = 4,
+    EVT_OP_OPEN  = 1,
+    EVT_OP_CLOSE = 2,
+    EVT_OP_READ  = 3,
+    EVT_OP_WRITE = 4,
 };
 
 enum {

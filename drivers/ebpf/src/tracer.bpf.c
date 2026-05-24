@@ -75,7 +75,7 @@ int trace_openat_exit(struct trace_event_raw_sys_exit *ctx) {
     e.pid = pid;
     e.tgid = tid;
     e.cgroup_id = bpf_get_current_cgroup_id();
-    e.op_type = OP_OPEN;
+    e.op_type = EVT_OP_OPEN;
     e.fd = fd;
     e.fd_type = FD_TYPE_FILE;
     e.timestamp_ns = bpf_ktime_get_ns();
@@ -105,7 +105,7 @@ int trace_close(struct trace_event_raw_sys_enter *ctx) {
     e.pid = pid;
     e.tgid = get_tid();
     e.cgroup_id = bpf_get_current_cgroup_id();
-    e.op_type = OP_CLOSE;
+    e.op_type = EVT_OP_CLOSE;
     e.fd = fd;
     e.fd_type = fd_type;
     e.timestamp_ns = bpf_ktime_get_ns();
@@ -132,7 +132,7 @@ int trace_read(struct trace_event_raw_sys_enter *ctx) {
     e.pid = pid;
     e.tgid = get_tid();
     e.cgroup_id = bpf_get_current_cgroup_id();
-    e.op_type = OP_READ;
+    e.op_type = EVT_OP_READ;
     e.fd = fd;
     e.fd_type = fd_type;
     e.bytes = count;
@@ -160,7 +160,7 @@ int trace_write(struct trace_event_raw_sys_enter *ctx) {
     e.pid = pid;
     e.tgid = get_tid();
     e.cgroup_id = bpf_get_current_cgroup_id();
-    e.op_type = OP_WRITE;
+    e.op_type = EVT_OP_WRITE;
     e.fd = fd;
     e.fd_type = fd_type;
     e.bytes = count;
@@ -203,7 +203,7 @@ int trace_socket_exit(struct trace_event_raw_sys_exit *ctx) {
     e.pid = pid;
     e.tgid = tid;
     e.cgroup_id = bpf_get_current_cgroup_id();
-    e.op_type = OP_OPEN;
+    e.op_type = EVT_OP_OPEN;
     e.fd = fd;
     e.fd_type = FD_TYPE_SOCKET;
     e.timestamp_ns = bpf_ktime_get_ns();
@@ -249,7 +249,7 @@ int trace_pipe2_exit(struct trace_event_raw_sys_exit *ctx) {
     e.pid = pid;
     e.tgid = tid;
     e.cgroup_id = bpf_get_current_cgroup_id();
-    e.op_type = OP_OPEN;
+    e.op_type = EVT_OP_OPEN;
     e.fd_type = FD_TYPE_PIPE;
     e.timestamp_ns = bpf_ktime_get_ns();
     bpf_get_current_comm(&e.comm, sizeof(e.comm));
