@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 ROOT_DIR = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
+from core.config import Settings
 from core.scoring.engine import ScoringEngine, Alert
 
 
@@ -14,7 +15,7 @@ class TestScoringEngine:
 
     def test_compute_below_threshold(self):
         """Test score below threshold returns None."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": False, "max_z_score": 0.0}
         
@@ -29,7 +30,7 @@ class TestScoringEngine:
 
     def test_compute_at_threshold(self):
         """Test score at threshold returns Alert with warning."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": False, "max_z_score": 0.0}
         
@@ -44,7 +45,7 @@ class TestScoringEngine:
 
     def test_compute_above_threshold(self):
         """Test score above threshold returns Alert."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": True, "max_z_score": 2.0}
         
@@ -60,7 +61,7 @@ class TestScoringEngine:
 
     def test_compute_signature_critical(self):
         """Test signature match sets severity to critical."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": False, "max_z_score": 0.0}
         
@@ -81,7 +82,7 @@ class TestScoringEngine:
 
     def test_compute_warning_threshold(self):
         """Test score between T and 2T without signature is warning."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": True, "max_z_score": 5.0}
         
@@ -97,7 +98,7 @@ class TestScoringEngine:
 
     def test_compute_statistical_scaling(self):
         """Test statistical anomaly scales with Z-score."""
-        engine = ScoringEngine(threshold=3.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=3.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": True, "max_z_score": 3.0}
         
@@ -113,7 +114,7 @@ class TestScoringEngine:
 
     def test_compute_multiple_heuristics(self):
         """Test multiple graph heuristics add up."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": False, "max_z_score": 0.0}
         
@@ -129,7 +130,7 @@ class TestScoringEngine:
 
     def test_compute_with_container_info(self):
         """Test container_info is included in Alert."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": False, "max_z_score": 0.0}
         container_info = {"id": "abc123", "name": "container1"}
@@ -147,7 +148,7 @@ class TestScoringEngine:
 
     def test_compute_custom_threshold(self):
         """Test custom threshold is used."""
-        engine = ScoringEngine(threshold=5.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=5.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": False, "max_z_score": 0.0}
         
@@ -182,7 +183,7 @@ class TestScoringEngine:
 
     def test_compute_no_reasons_when_below(self):
         """Test reasons remain empty when below threshold."""
-        engine = ScoringEngine(threshold=10.0)
+        engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": False, "max_z_score": 0.0}
         

@@ -61,7 +61,8 @@ class StatisticalDetector:
         max_z = float(max(abs(z) for z in z_scores))
         anomalous = max_z > self.threshold_z
 
-        mu = self._engine.profiles.get(pid, {}).get("mu", current_vector)
+        p = self._engine.profiles.get(pid)
+        mu = p.mu if p else current_vector
         distance = sum((c - m) ** 2 for c, m in zip(current_vector, mu)) ** 0.5
 
         return {

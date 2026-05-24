@@ -57,6 +57,8 @@ class Settings:
     # ── paths ─────────────────────────────────────────────────
     db_path:            str = DEFAULT_DB_PATH
     heartbeat_path:     str = DEFAULT_HEARTBEAT
+    data_dir:           str = "data"
+    web_dir:            str = "web"
 
 
 # ── IOC (Indicators of Compromise) ───────────────────────────────

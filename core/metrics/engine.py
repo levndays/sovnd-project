@@ -1,10 +1,32 @@
-import time
+"""EWMA-based behavioural metrics engine (§2.1).
+
+Maintains per-PID ``M(t) = (m₁, …, m₇)`` profiles:
+    m₁      — fd churn rate (open + close events / sec)
+    m₂_file — fraction of operations on regular files
+    m₂_sock — fraction of operations on sockets
+    m₂_pipe — fraction of operations on pipes
+    m₃_read — bytes read / sec
+    m₃_wrt  — bytes written / sec
+    m₄      — concurrent open-FD count (snapshot)
+
+N-gram anomaly scoring (§2.1 n-gram-tree) tracks rare
+syscall-operation sequences.
+"""
+
+from __future__ import annotations
+
 import logging
-from typing import Dict, List, Tuple, Any, Optional
+import time
 from collections import deque
 from enum import IntEnum
+from typing import Any, Deque, Dict, List, Optional, Tuple
+
+from core.config import get_settings, Settings
 
 logger = logging.getLogger(__name__)
+
+
+# ── domain enums ─────────────────────────────────────────────
 
 class OpType(IntEnum):
     OPEN  = 1
@@ -12,208 +34,196 @@ class OpType(IntEnum):
     READ  = 3
     WRITE = 4
 
+
 class FdType(IntEnum):
-    FILE   = 1
-    SOCKET = 2
-    PIPE   = 3
-    ANON   = 4
+    FILE    = 1
+    SOCKET  = 2
+    PIPE    = 3
+    ANON    = 4
     UNKNOWN = 0
 
+
+# ── per-PID profile state ────────────────────────────────────
+
+class _Profile:
+    __slots__ = (
+        "mu", "sigma", "window",
+        "ngram_buf", "ngram_counts",
+        "raw_op", "raw_open", "raw_close",
+        "raw_rbytes", "raw_wbytes",
+        "raw_ft_file", "raw_ft_socket", "raw_ft_pipe",
+        "fd_cnt", "last_snap",
+    )
+
+    def __init__(self, n_features: int, ngram_n: int, history_len: int):
+        self.mu           = [0.0] * n_features
+        self.sigma        = [1.0] * n_features
+        self.window:      Deque[List[float]] = deque(maxlen=history_len)
+        self.ngram_buf:   Deque[int]         = deque(maxlen=ngram_n)
+        self.ngram_counts: Dict[Tuple[int, ...], int] = {}
+
+        self.raw_op       = 0
+        self.raw_open     = 0
+        self.raw_close    = 0
+        self.raw_rbytes   = 0
+        self.raw_wbytes   = 0
+        self.raw_ft_file  = 0
+        self.raw_ft_socket = 0
+        self.raw_ft_pipe  = 0
+        self.fd_cnt       = 0
+        self.last_snap    = time.time()
+
+
+# ── engine ───────────────────────────────────────────────────
+
 class MetricsEngine:
-    """
-    Computes the M(t) behavioural profile per §2.1.
+    """Per-process metrics engine with EWMA baselines."""
 
-    M(t) = (m1, m2_type_file, m2_type_socket, m2_type_pipe,
-            m3_read_bps, m3_write_bps, m4_fd_count,
-            m5_ngram_score)
+    N_FEATURES = 7
 
-    Uses EWMA (alpha=0.3) for adaptive baseline of scalar metrics
-    and n-gram trees for syscall-op sequence anomaly detection.
-    """
+    def __init__(self, settings: Optional[Settings] = None):
+        cfg = settings or get_settings()
+        self.alpha       = cfg.ewma_alpha
+        self.n_gram_size = cfg.n_gram_size
+        self._hist_len   = cfg.history_maxlen
+        self._profiles: Dict[int, _Profile] = {}
 
-    OP_TYPES = {OpType.OPEN, OpType.CLOSE, OpType.READ, OpType.WRITE}
-    N_FEATURES = 7      # dimensions in the profile vector
-    N_HISTORY = 100      # sliding window for per-PID history
+    @property
+    def profiles(self) -> Dict[int, _Profile]:
+        return self._profiles
 
-    def __init__(self, alpha: float = 0.3, n_gram_size: int = 3):
-        self.alpha = alpha
-        self.n_gram_size = n_gram_size
+    # ── public API ───────────────────────────────────────────
 
-        # Per-PID state:  { pid: { "mu": [...], "sigma": [...],
-        #   "window": deque of metric_snapshots,
-        #   "ngram_buf": deque of op_type ints,
-        #   "ngram_counts": { (1,2,3): count } } }
-        self.profiles: Dict[int, Dict] = {}
+    def update(self, event: Dict[str, Any]) -> None:
+        """Ingest a single eBPF event and update counters.
 
-    # ── public API ──────────────────────────────────────────────
-
-    def update(self, event: Dict[str, Any]):
-        """
-        Process an eBPF event. Updates per-PID counters and,
-        once per second, computes a metric snapshot and updates
-        the EWMA baseline.
+        Once per second the accumulated counters are snapshotted
+        into an ``M(t)`` vector and the EWMA baseline is updated.
         """
         pid = event.get("pid")
         if pid is None:
             return
 
-        op_type = event.get("op_type", 0)
-        fd_type = event.get("fd_type", 0)
+        op    = event.get("op_type", 0)
+        fd_ty = event.get("fd_type", 0)
 
-        self._ensure_profile(pid)
-        prof = self.profiles[pid]
+        p = self._ensure(pid)
 
         # bump raw counters
-        prof["raw_op_count"] += 1
-        if op_type == OpType.OPEN:
-            prof["raw_fd_open"] += 1
-        elif op_type == OpType.CLOSE:
-            prof["raw_fd_close"] += 1
-        elif op_type == OpType.READ:
-            prof["raw_read_bytes"] += event.get("bytes", 0)
-        elif op_type == OpType.WRITE:
-            prof["raw_write_bytes"] += event.get("bytes", 0)
+        p.raw_op += 1
+        if op == OpType.OPEN:
+            p.raw_open += 1
+            p.fd_cnt   += 1
+        elif op == OpType.CLOSE:
+            p.raw_close += 1
+            if p.fd_cnt > 0:
+                p.fd_cnt -= 1
+        elif op == OpType.READ:
+            p.raw_rbytes += event.get("bytes", 0)
+        elif op == OpType.WRITE:
+            p.raw_wbytes += event.get("bytes", 0)
 
-        # track FD type distribution
-        if fd_type == FdType.FILE:
-            prof["raw_fd_type_file"] += 1
-        elif fd_type == FdType.SOCKET:
-            prof["raw_fd_type_socket"] += 1
-        elif fd_type == FdType.PIPE:
-            prof["raw_fd_type_pipe"] += 1
-
-        # track FD count: open +1, close -1
-        if op_type == OpType.OPEN:
-            prof["fd_count"] += 1
-        elif op_type == OpType.CLOSE and prof["fd_count"] > 0:
-            prof["fd_count"] -= 1
+        # fd-type distribution
+        if fd_ty == FdType.FILE:
+            p.raw_ft_file += 1
+        elif fd_ty == FdType.SOCKET:
+            p.raw_ft_socket += 1
+        elif fd_ty == FdType.PIPE:
+            p.raw_ft_pipe += 1
 
         # n-gram buffer
-        self._update_ngram(pid, op_type)
+        self._push_ngram(pid, op)
 
-        # snapshot metrics every 1 second
+        # periodic snapshot
         now = time.time()
-        if now - prof["last_snapshot_ts"] >= 1.0:
-            self._snapshot_and_update_ewma(pid, now)
+        if now - p.last_snap >= 1.0:
+            self._snapshot(pid, now)
 
     def get_current_vector(self, pid: int) -> List[float]:
-        """
-        Return the current metric vector for Z-score comparison.
-        Uses the most recent snapshot.
-        """
-        if pid not in self.profiles:
-            return [0.0] * self.N_FEATURES
-        prof = self.profiles[pid]
-        if prof["window"]:
-            return list(prof["window"][-1])
-        return list(prof.get("mu", [0.0] * self.N_FEATURES))
+        """Return the most recent metric-snapshot vector."""
+        p = self._profiles.get(pid)
+        if p and p.window:
+            return list(p.window[-1])
+        if p:
+            return list(p.mu)
+        return [0.0] * self.N_FEATURES
 
-    def get_z_scores(self, pid: int, current_vector: List[float]) -> List[float]:
-        if pid not in self.profiles:
-            return [0.0] * len(current_vector)
-        prof = self.profiles[pid]
-        mu = prof.get("mu", [0.0] * len(current_vector))
-        sigma = prof.get("sigma", [1.0] * len(current_vector))
-        z_scores = []
-        for i, (c, m, s) in enumerate(zip(current_vector, mu, sigma)):
+    def get_z_scores(self, pid: int, vec: List[float]) -> List[float]:
+        """Compute per-component Z-scores against the EWMA baseline."""
+        p = self._profiles.get(pid)
+        if not p:
+            return [0.0] * len(vec)
+        z = []
+        for v, m, s in zip(vec, p.mu, p.sigma):
             denom = s if s > 1e-9 else 1e-9
-            z_scores.append((c - m) / denom)
-        return z_scores
+            z.append((v - m) / denom)
+        return z
 
     def get_ngram_anomaly_score(self, pid: int) -> float:
-        """
-        Returns 1.0 – frequency of the most recent n-gram.
-        Rare sequences → high score.
-        """
-        if pid not in self.profiles:
-            return 1.0
-        prof = self.profiles[pid]
-        buf = prof["ngram_buf"]
-        if len(buf) < self.n_gram_size:
+        """Inverse-frequency score: rare n-grams → high anomaly."""
+        p = self._profiles.get(pid)
+        if not p or len(p.ngram_buf) < self.n_gram_size:
             return 0.0
-        ngram = tuple(buf)
-        counts = prof["ngram_counts"]
-        total = sum(counts.values())
+        ngram = tuple(p.ngram_buf)
+        total = sum(p.ngram_counts.values())
         if total == 0:
             return 1.0
-        freq = counts.get(ngram, 0) / total
+        freq = p.ngram_counts.get(ngram, 0) / total
         return 1.0 - freq
 
-    # ── internals ───────────────────────────────────────────────
+    # ── internals ─────────────────────────────────────────────
 
-    def _ensure_profile(self, pid: int):
-        if pid in self.profiles:
-            return
-        self.profiles[pid] = {
-            "mu":              [0.0] * self.N_FEATURES,
-            "sigma":           [1.0] * self.N_FEATURES,
-            "window":          deque(maxlen=self.N_HISTORY),
-            "ngram_buf":       deque(maxlen=self.n_gram_size),
-            "ngram_counts":    {},
-            "raw_op_count":    0,
-            "raw_fd_open":     0,
-            "raw_fd_close":    0,
-            "raw_read_bytes":  0,
-            "raw_write_bytes": 0,
-            "raw_fd_type_file":  0,
-            "raw_fd_type_socket":0,
-            "raw_fd_type_pipe":  0,
-            "fd_count":         0,
-            "last_snapshot_ts": time.time(),
-        }
+    def _ensure(self, pid: int) -> _Profile:
+        if pid not in self._profiles:
+            self._profiles[pid] = _Profile(
+                n_features=self.N_FEATURES,
+                ngram_n=self.n_gram_size,
+                history_len=self._hist_len,
+            )
+        return self._profiles[pid]
 
-    def _snapshot_and_update_ewma(self, pid: int, now: float):
-        prof = self.profiles[pid]
+    def _push_ngram(self, pid: int, op: int) -> None:
+        p = self._profiles[pid]
+        p.ngram_buf.append(op)
+        if len(p.ngram_buf) == self.n_gram_size:
+            ngram = tuple(p.ngram_buf)
+            p.ngram_counts[ngram] = p.ngram_counts.get(ngram, 0) + 1
 
-        # build metric vector from accumulated raw counters
-        # m1 = open + close churn rate
-        m1 = prof["raw_fd_open"] + prof["raw_fd_close"]
+    def _snapshot(self, pid: int, now: float) -> None:
+        p = self._profiles[pid]
 
-        # m2 = FD type distribution (normalised)
-        total_types = max(prof["raw_fd_type_file"] + prof["raw_fd_type_socket"] + prof["raw_fd_type_pipe"], 1)
-        m2_file   = prof["raw_fd_type_file"]   / total_types
-        m2_socket = prof["raw_fd_type_socket"]  / total_types
-        m2_pipe   = prof["raw_fd_type_pipe"]    / total_types
+        # build M(t) vector
+        m1       = float(p.raw_open + p.raw_close)
+        denom_ty = max(p.raw_ft_file + p.raw_ft_socket + p.raw_ft_pipe, 1)
+        m2_file  = p.raw_ft_file   / denom_ty
+        m2_sock  = p.raw_ft_socket / denom_ty
+        m2_pipe  = p.raw_ft_pipe   / denom_ty
+        m3_read  = float(p.raw_rbytes)
+        m3_wrt   = float(p.raw_wbytes)
+        m4       = float(p.fd_cnt)
 
-        # m3 = I/O intensity (bytes/sec)
-        m3_read  = prof["raw_read_bytes"]
-        m3_write = prof["raw_write_bytes"]
+        vec = [m1, m2_file, m2_sock, m2_pipe, m3_read, m3_wrt, m4]
+        p.window.append(vec)
 
-        # m4 = concurrent FD count (snapshot)
-        m4 = prof["fd_count"]
-
-        vec = [float(m1), m2_file, m2_socket, m2_pipe,
-               float(m3_read), float(m3_write), float(m4)]
-
-        prof["window"].append(vec)
-
-        # EWMA update for mu and sigma
-        old_mu = prof["mu"]
-        new_mu = [self.alpha * v + (1.0 - self.alpha) * old for v, old in zip(vec, old_mu)]
-        prof["mu"] = new_mu
+        # EWMA update
+        old_mu = p.mu
+        a = self.alpha
+        new_mu = [a * v + (1.0 - a) * o for v, o in zip(vec, old_mu)]
+        p.mu = new_mu
 
         for i in range(self.N_FEATURES):
             delta = vec[i] - old_mu[i]
-            old_s = prof["sigma"][i]
-            prof["sigma"][i] = ((1.0 - self.alpha) * (old_s ** 2 + self.alpha * delta ** 2)) ** 0.5
-            if prof["sigma"][i] < 0.01:
-                prof["sigma"][i] = 0.01
+            old_s = p.sigma[i]
+            new_s = ((1.0 - a) * (old_s ** 2 + a * delta ** 2)) ** 0.5
+            p.sigma[i] = max(new_s, 0.01)
 
-        # reset raw counters for next second
-        prof["raw_op_count"]    = 0
-        prof["raw_fd_open"]     = 0
-        prof["raw_fd_close"]    = 0
-        prof["raw_read_bytes"]  = 0
-        prof["raw_write_bytes"] = 0
-        prof["raw_fd_type_file"]   = 0
-        prof["raw_fd_type_socket"] = 0
-        prof["raw_fd_type_pipe"]   = 0
-        prof["last_snapshot_ts"] = now
-
-    def _update_ngram(self, pid: int, op_type: int):
-        prof = self.profiles[pid]
-        buf = prof["ngram_buf"]
-        buf.append(op_type)
-        if len(buf) == self.n_gram_size:
-            ngram = tuple(buf)
-            prof["ngram_counts"][ngram] = prof["ngram_counts"].get(ngram, 0) + 1
+        # reset accumulator counters
+        p.raw_op       = 0
+        p.raw_open     = 0
+        p.raw_close    = 0
+        p.raw_rbytes   = 0
+        p.raw_wbytes   = 0
+        p.raw_ft_file  = 0
+        p.raw_ft_socket = 0
+        p.raw_ft_pipe  = 0
+        p.last_snap    = now

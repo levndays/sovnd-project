@@ -2,20 +2,16 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import json
-import os
 import time
 import subprocess
 from datetime import datetime
-import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from core.config import get_settings
 from internal.storage.sqlite import StorageManager
 
-# Get project root (parent of src/)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT.endswith('/src'):
-    PROJECT_ROOT = os.path.dirname(PROJECT_ROOT)
-HEARTBEAT_FILE = os.path.join(PROJECT_ROOT, "data", "heartbeat.json")
+settings = get_settings()
+HEARTBEAT_FILE = Path(settings.heartbeat_path)
 
 # ----------------- PAGE CONFIG -----------------
 st.set_page_config(
@@ -53,7 +49,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ----------------- STATE & DATA -----------------
-storage = StorageManager()
+storage = StorageManager(db_path=settings.db_path)
 
 if 'syscall_history' not in st.session_state:
     st.session_state.syscall_history =[]
@@ -70,10 +66,9 @@ if 'flash_screen' not in st.session_state:
 
 def load_heartbeat():
     try:
-        with open(HEARTBEAT_FILE, "r") as f:
-            data = json.load(f)
-            return data.get("events_per_sec", 0)
-    except:
+        data = json.loads(HEARTBEAT_FILE.read_text())
+        return data.get("events_per_sec", 0)
+    except Exception:
         return 0
 
 def launch_real_attack():

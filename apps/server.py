@@ -1,21 +1,31 @@
-import asyncio, json, os, time, random
+import asyncio
+import json
+import time
+import random
+import subprocess
+from pathlib import Path
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Response
 from fastapi.staticfiles import StaticFiles
+
+from core.config import get_settings
 from internal.storage.sqlite import StorageManager
 
+settings = get_settings()
 app = FastAPI(
     title="SovND Security API",
     description="API for accessing eBPF-based security monitoring data",
     version="1.0.0"
 )
 
-storage = StorageManager()
+storage = StorageManager(db_path=settings.db_path)
+
+WEB_DIR = settings.web_dir
 
 def get_storage():
     return storage
 
-# Ensure web directory exists for static files
-os.makedirs("web", exist_ok=True)
+Path(WEB_DIR).mkdir(exist_ok=True)
 
 class NoCacheStaticMount(StaticFiles):
     async def get_response(self, path, scope):
@@ -25,14 +35,15 @@ class NoCacheStaticMount(StaticFiles):
         response.headers["Expires"] = "0"
         return response
 
-# Mount static files to /static
-app.mount("/static", NoCacheStaticMount(directory="web"), name="static")
+app.mount("/static", NoCacheStaticMount(directory=WEB_DIR), name="static")
+
+INDEX_PATH = Path(WEB_DIR) / "index.html"
 
 @app.get("/")
 async def get_index():
     """Serves the main security dashboard at root."""
     try:
-        content = open("web/index.html", "r").read()
+        content = Path(INDEX_PATH).read_text()
         return Response(
             content,
             media_type="text/html",
@@ -43,7 +54,7 @@ async def get_index():
             }
         )
     except FileNotFoundError:
-        return {"error": "Dashboard HTML not found in web/ index.html"}
+        return {"error": f"Dashboard HTML not found in {WEB_DIR}/index.html"}
 
 @app.get("/api")
 async def get_api_root():
@@ -85,11 +96,12 @@ async def websocket_endpoint(websocket: WebSocket):
             alerts = storage.get_recent_alerts(limit=10)
             eps = 0
             try:
-                with open("data/heartbeat.json", "r") as f:
-                    hb = json.load(f)
-                    if time.time() - hb.get("timestamp", 0) < 3:
-                        eps = hb.get("events_per_sec", 0)
-            except: pass
+                heartbeat_data = Path(settings.heartbeat_path).read_text()
+                hb = json.loads(heartbeat_data)
+                if time.time() - hb.get("timestamp", 0) < 3:
+                    eps = hb.get("events_per_sec", 0)
+            except Exception:
+                pass
             await websocket.send_json({"eps": eps, "alerts": alerts})
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
@@ -186,7 +198,7 @@ async def trigger_attack():
     
     selected = random.choice(payloads)
     cmd = selected["cmd"]
-    result = os.system(f"{cmd} > /dev/null 2>&1 &")
+    subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
     return {
         "status": "attack_launched",
@@ -195,6 +207,5 @@ async def trigger_attack():
             "type": selected["type"],
             "description": selected["description"],
             "expected_reason": selected["expected_reason"]
-        },
-        "result": result
+        }
     }
