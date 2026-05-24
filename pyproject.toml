@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "sovnd"
+version = "0.1.0"
+description = "Real-time Linux kernel security monitoring with eBPF and multi-vector threat detection"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "SovND Contributors" },
+]
+keywords = ["ebpf", "security", "threat-detection", "linux", "kernel-monitoring"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["apps*", "core*", "drivers*", "internal*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v --tb=short"

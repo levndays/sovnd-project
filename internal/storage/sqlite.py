@@ -3,9 +3,9 @@ import json
 import logging
 import os
 import threading
-from typing import List, Dict, Any, Optional
-from datetime import datetime
 from contextlib import contextmanager
+from datetime import datetime
+from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class StorageManager:
     Uses a thread-safe connection pattern and context managers.
     """
     
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or os.environ.get("DB_PATH", "data/sovnd.db")
         self._lock = threading.Lock()
         self._init_db()
