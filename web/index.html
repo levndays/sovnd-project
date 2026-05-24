@@ -1,83 +1,88 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Дашборд системи</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SovND — Kernel Security Monitor</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body {
-            background: #f8fafc;
-            color: #1e293b;
-            font-family: system-ui, -apple-system, sans-serif;
+        body { background: #0f1119; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+        @keyframes pulse-attack {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.6); }
+            50% { box-shadow: 0 0 40px 8px rgba(239,68,68,0.3); }
         }
+        @keyframes slide-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        .alert-new { animation: slide-in 0.3s ease-out; }
+        .attack-pulse { animation: pulse-attack 0.8s ease-in-out 3; }
+        .score-bar { height: 6px; border-radius: 3px; transition: width 0.4s ease; }
     </style>
 </head>
-<body class="p-6">
+<body class="p-5">
     <div class="max-w-[1600px] mx-auto">
 
         <!-- Header -->
-        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-            <div>
-                <h1 class="text-2xl font-semibold text-slate-800">Дашборд системи</h1>
-                <div class="flex items-center gap-2 text-sm text-slate-500 mt-1">
-                    <span class="h-2 w-2 rounded-full bg-green-500"></span>
-                    Система моніторингу активна
+        <div class="flex items-center justify-between mb-6">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-lg font-bold text-white">S</div>
+                <div>
+                    <h1 class="text-xl font-bold text-white">SovND Kernel Monitor</h1>
+                    <div class="flex items-center gap-2 text-xs text-emerald-400">
+                        <span class="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
+                        eBPF probes active
+                    </div>
                 </div>
             </div>
-
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 w-full md:w-auto">
-                <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                    <div class="text-xs text-slate-500">Подій/сек</div>
-                    <div id="stat-eps" class="text-xl font-bold text-slate-800">0</div>
-                </div>
-                <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                    <div class="text-xs text-slate-500">Сповіщення</div>
-                    <div id="stat-alerts" class="text-xl font-bold text-red-600">0</div>
-                </div>
-                <div class="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                    <div class="text-xs text-slate-500">Статус</div>
-                    <div class="text-sm font-medium text-slate-700">Онлайн</div>
-                </div>
-                <button onclick="fireAttack()" class="bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-                    Запустити тест
-                </button>
-                <div id="attack-status"></div>
+            <div id="attack-indicator" class="hidden text-sm text-red-400 font-medium px-4 py-2 bg-red-950/50 border border-red-500/30 rounded-lg">
+                ⚡ Attack in progress...
             </div>
         </div>
 
-        <div class="grid grid-cols-12 gap-6">
+        <!-- KPI Row -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+                <div class="text-xs text-slate-500 mb-1">EVENTS / SEC</div>
+                <div id="kpi-eps" class="text-3xl font-bold text-blue-400 font-mono">0</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+                <div class="text-xs text-slate-500 mb-1">ALERTS</div>
+                <div id="kpi-alerts" class="text-3xl font-bold text-amber-400 font-mono">0</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+                <div class="text-xs text-slate-500 mb-1">CRITICAL</div>
+                <div id="kpi-critical" class="text-3xl font-bold text-red-400 font-mono">0</div>
+            </div>
+            <button id="btn-attack" onclick="launchAttack()"
+                class="bg-red-600 hover:bg-red-500 text-white font-bold px-4 py-3 rounded-xl transition-all text-sm disabled:opacity-50 disabled:cursor-wait">
+                ⚡ LAUNCH ATTACK
+            </button>
+        </div>
 
-            <!-- Left Column -->
-            <div class="col-span-12 lg:col-span-8 space-y-6">
-
-                <!-- Main Chart -->
-                <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <h3 class="text-sm font-medium text-slate-600 mb-4">Історія подій</h3>
-                    <canvas id="mainChart" height="120"></canvas>
-                </div>
-
-                <!-- Live Feed -->
-                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div class="bg-slate-50 px-4 py-3 border-b border-slate-200">
-                        <span class="text-sm font-medium text-slate-600">Журнал активності</span>
+        <!-- Chart + Alerts -->
+        <div class="grid grid-cols-12 gap-5">
+            <!-- Chart -->
+            <div class="col-span-12 lg:col-span-8">
+                <div class="bg-slate-900 border border-slate-800 p-5 rounded-xl">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-medium text-slate-400">SYSTEM CALL THROUGHPUT</h3>
+                        <span class="text-xs text-slate-600">50-second rolling window</span>
                     </div>
-                    <div id="kernel-feed" class="h-48 overflow-y-auto p-4 text-sm text-slate-600">
-                        <div class="text-slate-400 italic">Очікування даних...</div>
-                    </div>
+                    <canvas id="mainChart" height="140"></canvas>
                 </div>
             </div>
 
-            <!-- Right Column: Alerts -->
-            <div class="col-span-12 lg:col-span-4 flex flex-col h-full">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-sm font-medium text-slate-600">Сповіщення</h3>
-                    <span id="alert-count-badge" class="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded-full">0</span>
-                </div>
-
-                <div id="alert-list" class="space-y-3 overflow-y-auto max-h-[700px] pr-2">
-                    <div class="text-center py-12 border border-slate-200 rounded-xl text-slate-500 text-sm">
-                        Немає сповіщень
+            <!-- Alert Feed -->
+            <div class="col-span-12 lg:col-span-4">
+                <div class="bg-slate-900 border border-slate-800 rounded-xl h-full flex flex-col">
+                    <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+                        <h3 class="text-sm font-medium text-slate-400">THREAT FEED</h3>
+                        <span id="alert-count" class="text-xs text-slate-600">0 alerts</span>
+                    </div>
+                    <div id="alert-container" class="flex-1 overflow-y-auto p-3 space-y-3 max-h-[520px]">
+                        <div class="text-center py-16 text-slate-600 text-sm">
+                            <div class="text-3xl mb-2">&#128737;</div>
+                            No threats detected.<br>System is running normally.
+                        </div>
                     </div>
                 </div>
             </div>
@@ -85,24 +90,25 @@
     </div>
 
     <script>
-        const sessionStartTime = new Date().getTime();
-        const kernelFeed = document.getElementById('kernel-feed');
-        const alertList = document.getElementById('alert-list');
-        const alertBadge = document.getElementById('alert-count-badge');
+        const sessionStart = Date.now();
+        let attackEvents = [];
+        let lastAlertCount = 0;
 
-        let totalAlerts = 0;
-        let feedInitialized = false;
-
+        // ── Chart ──────────────────────────────────────────────
         const ctx = document.getElementById('mainChart').getContext('2d');
         const mainChart = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: Array(50).fill(''),
                 datasets: [{
-                    label: 'Подій/сек',
                     data: Array(50).fill(0),
                     borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    backgroundColor: (ctx) => {
+                        const gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, 200);
+                        gradient.addColorStop(0, 'rgba(59,130,246,0.3)');
+                        gradient.addColorStop(1, 'rgba(59,130,246,0)');
+                        return gradient;
+                    },
                     fill: true,
                     tension: 0.3,
                     borderWidth: 2,
@@ -112,104 +118,142 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    annotation: { annotations: {} }
+                },
                 scales: {
-                    y: { grid: { color: '#e2e8f0' }, ticks: { color: '#64748b' } },
+                    y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b' }, beginAtZero: true },
                     x: { display: false }
                 },
-                plugins: { legend: { display: false } },
                 animation: false
             }
         });
 
+        // ── WebSocket ──────────────────────────────────────────
         const ws = new WebSocket(`ws://${window.location.host}/ws/telemetry`);
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+        ws.onmessage = (e) => {
+            const data = JSON.parse(e.data);
 
-            document.getElementById('stat-eps').innerText = data.eps.toLocaleString();
+            // EPS
+            document.getElementById('kpi-eps').innerText = data.eps.toLocaleString();
             mainChart.data.datasets[0].data.push(data.eps);
             mainChart.data.datasets[0].data.shift();
+
+            // Attack zone highlighting via plugin
+            const now = Date.now();
+            mainChart.config.plugins = [{
+                id: 'attackZones',
+                beforeDraw(chart) {
+                    const { ctx, chartArea, scales } = chart;
+                    const activeAttacks = attackEvents.filter(t => now - t < 15000);
+                    if (activeAttacks.length === 0) return;
+                    ctx.save();
+                    for (const at of activeAttacks) {
+                        const elapsed = (now - at) / 1000;
+                        const xEnd = chartArea.right;
+                        const xStart = Math.max(chartArea.left, xEnd - (elapsed + 3) * (chartArea.right - chartArea.left) / 50);
+                        ctx.fillStyle = 'rgba(239, 68, 68, 0.08)';
+                        ctx.fillRect(xStart, chartArea.top, xEnd - xStart, chartArea.bottom - chartArea.top);
+                    }
+                    ctx.restore();
+                }
+            }];
             mainChart.update();
 
-            if (data.eps > 0 && !feedInitialized) {
-                kernelFeed.innerHTML = '';
-                feedInitialized = true;
-            }
+            // Alerts
+            const alerts = data.alerts || [];
+            const criticalCount = alerts.filter(a => a.severity === 'critical').length;
+            document.getElementById('kpi-alerts').innerText = alerts.length;
+            document.getElementById('kpi-critical').innerText = criticalCount;
+            document.getElementById('alert-count').innerText = `${alerts.length} alerts`;
 
-            if (data.eps > 0) {
-                const syscalls = ['openat', 'execve', 'close', 'mmap', 'read', 'write', 'fstat'];
-                for(let i=0; i<2; i++) {
-                    const log = document.createElement('div');
-                    const ts = new Date().toLocaleTimeString();
-                    const sc = syscalls[Math.floor(Math.random() * syscalls.length)];
-                    log.innerHTML = `<span class="text-slate-400">[${ts}]</span> ${sc}(pid=${Math.floor(Math.random()*20000+1000)})`;
-                    kernelFeed.prepend(log);
-                    if(kernelFeed.children.length > 30) kernelFeed.removeChild(kernelFeed.lastChild);
+            if (alerts.length > lastAlertCount) {
+                document.getElementById('kpi-alerts').parentElement.classList.add('attack-pulse');
+                setTimeout(() => document.getElementById('kpi-alerts').parentElement.classList.remove('attack-pulse'), 2500);
+            }
+            lastAlertCount = alerts.length;
+
+            if (alerts.length > 0) {
+                const container = document.getElementById('alert-container');
+                const existingPids = new Set();
+                container.querySelectorAll('[data-pid]').forEach(el => existingPids.add(el.dataset.pid));
+
+                let html = '';
+                for (const a of alerts.slice(0, 20)) {
+                    const isNew = !existingPids.has(String(a.pid)) && (Date.now() - new Date(a.timestamp).getTime()) < 5000;
+                    const severityBg = a.severity === 'critical' ? 'border-red-500/40 bg-red-950/30' : 'border-amber-500/30 bg-amber-950/20';
+                    const scoreColor = a.severity === 'critical' ? 'text-red-400' : 'text-amber-400';
+                    const sigW = Math.min(100, (a.breakdown?.signature || 0) / 15 * 100);
+                    const statW = Math.min(100, (a.breakdown?.statistical || 0) / 5 * 100);
+                    const graphW = Math.min(100, (a.breakdown?.graph || 0) / 15 * 100);
+
+                    html += `
+                    <div data-pid="${a.pid}" class="${severityBg} border rounded-lg p-3 ${isNew ? 'alert-new' : ''}">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs text-slate-500">${new Date(a.timestamp).toLocaleTimeString()}</span>
+                            <span class="text-xs font-bold ${scoreColor}">${a.score}</span>
+                        </div>
+                        <div class="font-medium text-sm text-white">[${a.comm || '?'}] PID ${a.pid}</div>
+                        <div class="text-xs text-slate-400 mt-1">${(a.reasons || []).join(' &bull; ')}</div>
+                        <div class="mt-2 space-y-1">
+                            <div class="flex items-center gap-2 text-xs text-slate-500">
+                                <span class="w-14">sig</span>
+                                <div class="flex-1 bg-slate-800 rounded-full h-1"><div class="score-bar bg-red-500" style="width:${sigW}%"></div></div>
+                                <span class="w-8 text-right">${a.breakdown?.signature || 0}</span>
+                            </div>
+                            <div class="flex items-center gap-2 text-xs text-slate-500">
+                                <span class="w-14">stat</span>
+                                <div class="flex-1 bg-slate-800 rounded-full h-1"><div class="score-bar bg-amber-500" style="width:${statW}%"></div></div>
+                                <span class="w-8 text-right">${(a.breakdown?.statistical || 0).toFixed(1)}</span>
+                            </div>
+                            <div class="flex items-center gap-2 text-xs text-slate-500">
+                                <span class="w-14">graph</span>
+                                <div class="flex-1 bg-slate-800 rounded-full h-1"><div class="score-bar bg-purple-500" style="width:${graphW}%"></div></div>
+                                <span class="w-8 text-right">${a.breakdown?.graph || 0}</span>
+                            </div>
+                        </div>
+                    </div>`;
                 }
-            }
-
-            const liveAlerts = data.alerts.filter(a => {
-                return new Date(a.timestamp).getTime() > (sessionStartTime - 20000);
-            });
-
-            totalAlerts = data.alerts.length;
-            document.getElementById('stat-alerts').innerText = totalAlerts;
-            alertBadge.innerText = liveAlerts.length;
-
-            if (liveAlerts.length > 0) {
-                alertList.innerHTML = liveAlerts.map(a => `
-                    <div class="p-4 rounded-lg border ${a.score > 20 ? 'border-red-300 bg-red-50' : 'border-amber-300 bg-amber-50'}">
-                        <div class="flex justify-between items-start mb-2">
-                            <div>
-                                <div class="text-xs text-slate-500">${new Date(a.timestamp).toLocaleTimeString()}</div>
-                                <div class="font-medium text-slate-800">PID ${a.pid} - ${a.comm}</div>
-                            </div>
-                            <div class="text-sm font-bold ${a.score > 20 ? 'text-red-600' : 'text-amber-600'}">
-                                ${a.score}
-                            </div>
-                        </div>
-                        <div class="text-sm text-slate-600 mb-3">
-                            ${a.reasons.join(', ')}
-                        </div>
-                        <div class="grid grid-cols-3 gap-2 text-xs">
-                            <div class="text-center">
-                                <div class="text-slate-500">Сигнатура</div>
-                                <div class="font-medium ${a.breakdown.signature > 0 ? 'text-red-600' : 'text-slate-400'}">${a.breakdown.signature}</div>
-                            </div>
-                            <div class="text-center">
-                                <div class="text-slate-500">Статистика</div>
-                                <div class="font-medium ${a.breakdown.statistical > 0 ? 'text-amber-600' : 'text-slate-400'}">${a.breakdown.statistical.toFixed(1)}</div>
-                            </div>
-                            <div class="text-center">
-                                <div class="text-slate-500">Граф</div>
-                                <div class="font-medium ${a.breakdown.graph > 0 ? 'text-purple-600' : 'text-slate-400'}">${a.breakdown.graph}</div>
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
+                container.innerHTML = html;
             } else {
-                alertList.innerHTML = `<div class="text-center py-12 border border-slate-200 rounded-xl text-slate-500 text-sm">Немає сповіщень</div>`;
+                document.getElementById('alert-container').innerHTML = `
+                    <div class="text-center py-16 text-slate-600 text-sm">
+                        <div class="text-3xl mb-2">&#128737;</div>
+                        No threats detected.<br>System is running normally.
+                    </div>`;
             }
         };
 
-        async function fireAttack() {
-            const btn = event.target;
-            const statusEl = document.getElementById('attack-status');
-            btn.innerText = "Запуск...";
+        ws.onclose = () => { document.querySelector('.animate-pulse').className = 'w-2 h-2 bg-red-400 rounded-full'; };
+
+        // ── Attack ────────────────────────────────────────────
+        async function launchAttack() {
+            const btn = document.getElementById('btn-attack');
+            const indicator = document.getElementById('attack-indicator');
             btn.disabled = true;
+            btn.innerText = 'Launching...';
+
             try {
                 const res = await fetch('/api/attack', { method: 'POST' });
                 const data = await res.json();
-                if (data.payload) {
-                    statusEl.innerHTML = `<span class="text-green-600 text-sm">Запущено: ${data.payload.name}</span>`;
-                }
-            } catch(e) {
-                statusEl.innerHTML = `<span class="text-red-600 text-sm">Помилка запуску</span>`;
+                attackEvents.push(Date.now());
+                attackEvents = attackEvents.filter(t => Date.now() - t < 30000);
+
+                indicator.classList.remove('hidden');
+                indicator.innerText = `⚡ ${data.payload?.name || 'Attack'} launched`;
+                setTimeout(() => indicator.classList.add('hidden'), 4000);
+            } catch (err) {
+                indicator.classList.remove('hidden');
+                indicator.innerText = '⚠ Attack failed';
+                setTimeout(() => indicator.classList.add('hidden'), 3000);
             }
+
             setTimeout(() => {
-                btn.innerText = "Запустити тест";
+                btn.innerText = '⚡ LAUNCH ATTACK';
                 btn.disabled = false;
-            }, 2500);
+            }, 1500);
         }
     </script>
 </body>
