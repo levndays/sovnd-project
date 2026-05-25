@@ -18,6 +18,7 @@ from core.detection.statistical import StatisticalDetector
 from core.metrics.engine import MetricsEngine
 from core.scoring.engine import ScoringEngine
 from core.graph.builder import ProvenanceGraphBuilder
+from internal.container.resolver import ContainerResolver
 from internal.storage.sqlite import StorageManager
 
 NOISE_COMMANDS = {"sudo", "unix_chkpwd", "polkitd", "dbus-daemon", "systemd-logind",
@@ -39,6 +40,7 @@ def run_agent():
     metrics_engine = MetricsEngine(settings=settings)
     stat_detector = StatisticalDetector(engine=metrics_engine)
     graph_builder = ProvenanceGraphBuilder(settings=settings)
+    resolver = ContainerResolver()  # reads TARGET_LABEL from env
 
     storage.clear_alerts()
     os.makedirs(settings.data_dir, exist_ok=True)
@@ -46,6 +48,22 @@ def run_agent():
     try:
         agent.start()
         print("\N{WHITE HEAVY CHECK MARK} eBPF Agent attached. Monitoring...")
+
+        # Narrow in-kernel event emission to the labeled container,
+        # if one is configured and we can locate it. Without
+        # TARGET_LABEL the filter stays disabled and we see all
+        # cgroups (the default for ad-hoc / single-host demos).
+        if resolver.target_label:
+            target_inode = resolver.find_target_cgroup_inode()
+            if target_inode:
+                agent.set_target_cgroup(target_inode)
+                logger.info("eBPF filter narrowed to cgroup %d (label %s)",
+                            target_inode, resolver.target_label)
+            else:
+                logger.warning("TARGET_LABEL=%s set but no matching container"
+                               " found — kernel filter stays disabled",
+                               resolver.target_label)
+
         events_this_second = 0
         last_heartbeat = time.time()
 
@@ -77,23 +95,29 @@ def run_agent():
             graph_builder.add_event(event)
             graph_heuristics = graph_builder.heuristics(pid, event)
 
+            # ── container correlation ─────────────────────────
+            container_info = resolver.resolve(event.get("cgroup_id", 0))
+
             # ── scoring ───────────────────────────────────────
             alert = scoring.compute(
                 event=event,
                 stat_report=stat_report,
                 sig_match=sig_match,
                 graph_heuristics=graph_heuristics,
+                container_info=container_info,
             )
             if alert:
                 comm = str(event.get("comm", ""))
                 if comm in NOISE_COMMANDS:
                     continue
                 storage.save_alert(asdict(alert))
+                container_tag = (f" container={container_info['name']}"
+                                 if container_info else "")
                 print(f"\N{POLICE CARS REVOLVING LIGHT} ALERT: "
                       f"PID {event['pid']} [{event.get('comm','?')}] "
                       f"op={event.get('op_name','?')} "
                       f"SCORE {alert.score} "
-                      f"{alert.severity}", flush=True)
+                      f"{alert.severity}{container_tag}", flush=True)
 
     except KeyboardInterrupt:
         print("\nShutting down...")

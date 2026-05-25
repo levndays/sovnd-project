@@ -226,6 +226,33 @@ class TestEBPFAgentGetEvent:
         assert result["comm"] == "alpha"
 
 
+class TestEBPFAgentSetTargetCgroup:
+    """``set_target_cgroup`` populates the in-kernel filter_config map
+    via the C loader so events from other cgroups are dropped."""
+
+    def test_raises_before_start(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        with pytest.raises(RuntimeError):
+            agent.set_target_cgroup(12345)
+
+    def test_passes_inode_to_loader(self, tmp_path):
+        fake_so = tmp_path / "libloader.so"
+        fake_so.write_bytes(b"")
+        agent = EBPFAgent(lib_path=str(fake_so))
+
+        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
+            mock_lib = MagicMock()
+            mock_lib.start_loader.return_value = 0
+            mock_lib.set_target_cgroup.return_value = 0
+            mock_cdll.return_value = mock_lib
+            agent.start()
+            agent.set_target_cgroup(424242)
+            mock_lib.set_target_cgroup.assert_called_once()
+            (arg,) = mock_lib.set_target_cgroup.call_args.args
+            assert arg.value == 424242
+        agent.stop()
+
+
 class TestEBPFAgentCallback:
     """The C library invokes ``_c_callback(ctx, data, size)``; data is
     a void* pointing at an ``Event``. The callback copies the event

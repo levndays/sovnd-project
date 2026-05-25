@@ -119,21 +119,51 @@ class TestContainerResolverResolve:
         assert resolver.resolve(12345) is None
 
 
-class TestExtractCgroupInode:
-    """Tests for the static helper that parses /proc/<pid>/cgroup output."""
+class TestExtractCgroupPath:
+    """Tests for the helper that parses /proc/<pid>/cgroup to a path.
 
-    def test_extracts_docker_id_from_cgroup_v2(self):
+    The resolver no longer derives an inode from the container ID hash
+    (that value never matched ``bpf_get_current_cgroup_id()``); it
+    extracts the cgroup hierarchy path and the caller stats it under
+    /sys/fs/cgroup to get the real inode.
+    """
+
+    def test_extracts_v2_path(self):
         container_id = "0123456789abcdef" * 4  # 64 hex chars
         cgroup_data = f"0::/system.slice/docker-{container_id}.scope\n"
-        result = ContainerResolver._extract_cgroup_inode(cgroup_data)
-        assert result is not None
+        path = ContainerResolver._extract_cgroup_path(cgroup_data)
+        assert path == f"/system.slice/docker-{container_id}.scope"
 
-    def test_returns_none_for_non_docker(self):
-        cgroup_data = "0::/user.slice/user-1000.slice/session-1.scope\n"
-        assert ContainerResolver._extract_cgroup_inode(cgroup_data) is None
+    def test_v2_preferred_over_v1(self):
+        cgroup_data = (
+            "9:memory:/docker/abc\n"
+            "0::/system.slice/docker-deadbeef.scope\n"
+        )
+        path = ContainerResolver._extract_cgroup_path(cgroup_data)
+        assert path == "/system.slice/docker-deadbeef.scope"
+
+    def test_falls_back_to_v1(self):
+        cgroup_data = "9:memory:/docker/abc\n"
+        path = ContainerResolver._extract_cgroup_path(cgroup_data)
+        assert path == "/docker/abc"
 
     def test_returns_none_for_empty(self):
-        assert ContainerResolver._extract_cgroup_inode("") is None
+        assert ContainerResolver._extract_cgroup_path("") is None
+
+
+class TestStatCgroupInode:
+    """Tests for the inode-reader helper."""
+
+    def test_returns_none_for_missing_path(self):
+        assert ContainerResolver._stat_cgroup_inode("/definitely/not/a/cg") is None
+
+    def test_returns_inode_for_existing_path(self, tmp_path, monkeypatch):
+        from internal.container import resolver as resolver_mod
+        monkeypatch.setattr(resolver_mod, "CGROUP_V2_MOUNT", tmp_path)
+        (tmp_path / "foo").mkdir()
+        ino = ContainerResolver._stat_cgroup_inode("/foo")
+        assert ino is not None
+        assert ino == (tmp_path / "foo").stat().st_ino
 
 
 class TestMatchesLabel:
@@ -178,6 +208,25 @@ class TestClearCache:
         resolver.clear_cache()
 
         assert resolver._cache == {}
+
+
+class TestFindTargetCgroupInode:
+    """Tests for the helper that locates the target container's cgroup
+    inode at agent startup (used to narrow the eBPF filter)."""
+
+    def test_returns_none_without_docker(self):
+        resolver = _make_resolver_without_docker()
+        assert resolver.find_target_cgroup_inode() is None
+
+    def test_returns_first_cached_inode(self):
+        resolver = _make_resolver_without_docker()
+        resolver._docker = MagicMock()
+        # Stub _refresh_cache so we don't go through the real
+        # /proc + /sys/fs/cgroup lookup chain
+        resolver._refresh_cache = lambda: resolver._cache.update(
+            {424242: {"id": "abc", "name": "web"}}
+        )
+        assert resolver.find_target_cgroup_inode() == 424242
 
 
 class TestThreadSafety:

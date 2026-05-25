@@ -84,6 +84,8 @@ class EBPFAgent:
         self.lib.poll_events.restype = ctypes.c_int
         self.lib.stop_loader.argtypes = []
         self.lib.stop_loader.restype = None
+        self.lib.set_target_cgroup.argtypes = [ctypes.c_ulonglong]
+        self.lib.set_target_cgroup.restype = ctypes.c_int
 
         err = self.lib.start_loader(self._callback)
         if err != 0:
@@ -106,6 +108,18 @@ class EBPFAgent:
             return event_to_dict(evt)
         except queue.Empty:
             return None
+
+    def set_target_cgroup(self, cgroup_id: int) -> int:
+        """Narrow in-kernel filtering to a single cgroup.
+
+        Pass the cgroup v2 inode (as returned by
+        ``ContainerResolver.find_target_cgroup_inode``) to make the
+        eBPF tracer drop events from every other cgroup. Pass 0 to
+        disable the filter. Must be called after ``start()``.
+        """
+        if self.lib is None:
+            raise RuntimeError("set_target_cgroup called before start()")
+        return self.lib.set_target_cgroup(ctypes.c_ulonglong(cgroup_id))
 
     def stop(self):
         self._polling = False

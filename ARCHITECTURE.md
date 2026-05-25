@@ -357,7 +357,51 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 ---
 
-### 10. Dashboard (`web/index.html`)
+### 10. Container Resolver (`internal/container/resolver.py`)
+
+**Purpose:** Correlate eBPF events with Docker container metadata, and
+narrow in-kernel filtering to a single labeled container.
+
+**How correlation works:**
+The eBPF tracer stamps every event with `bpf_get_current_cgroup_id()`,
+which is the **cgroup v2 inode** of the calling process. To map that
+to a container, the resolver:
+
+1. Asks the Docker SDK for containers matching `TARGET_LABEL` (if set).
+2. Reads each container's init PID's `/proc/<pid>/cgroup` to learn its
+   cgroup hierarchy path.
+3. `stat()`s `/sys/fs/cgroup<path>` — the inode there matches what
+   eBPF emits.
+4. Caches `inode → metadata` so subsequent lookups are O(1).
+
+**Two integration points in `apps/agent.py`:**
+
+- **Startup:** if `TARGET_LABEL` is set and a matching container is
+  found, the resolver looks up its cgroup inode and calls
+  `agent.set_target_cgroup(inode)`. The eBPF `filter_event()` then
+  drops events from every other cgroup at the kernel boundary.
+- **Per event:** `resolver.resolve(event["cgroup_id"])` returns the
+  container metadata (id / name / image / labels), which is attached
+  to the resulting `Alert.container_info` and shown in the log line
+  / dashboard.
+
+**Why not just hash the container ID?** The previous implementation
+masked the container's 64-hex-char ID down to a uint32 and called
+that the "inode." That value never matches what `bpf_get_current_cgroup_id()`
+returns, so resolution always silently failed. The current code stats
+the actual cgroup directory.
+
+**Loader-side C contract (`drivers/ebpf/loader/loader.c`):**
+
+```c
+int set_target_cgroup(uint64_t cgroup_id);
+// Writes filter_config[0] = { target_cgroup, enabled=1 }.
+// Pass 0 to disable the filter.
+```
+
+---
+
+### 11. Dashboard (`web/index.html`)
 
 **Purpose:** Browser UI for live telemetry.
 

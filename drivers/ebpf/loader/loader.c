@@ -100,6 +100,32 @@ int poll_events(int timeout_ms)
     return ring_buffer__poll(rb, timeout_ms);
 }
 
+/* Populate the filter_config map so the in-kernel filter narrows
+ * event emission to a single target cgroup. Pass 0 to disable.
+ * Returns 0 on success, negative errno on failure. */
+int set_target_cgroup(unsigned long long cgroup_id)
+{
+    struct filter_key { unsigned int idx; } key = { .idx = 0 };
+    struct filter_val {
+        unsigned long long target_cgroup;
+        unsigned int rate_limit;
+        unsigned int enabled;
+        char path_prefix[64];
+    } val = {
+        .target_cgroup = cgroup_id,
+        .rate_limit = 0,
+        .enabled = cgroup_id ? 1 : 0,
+    };
+
+    int fd = bpf_map__fd(skel->maps.filter_config);
+    if (fd < 0)
+        return -1;
+    int err = bpf_map_update_elem(fd, &key, &val, 0);
+    if (err)
+        fprintf(stderr, "[loader] set_target_cgroup: %s\n", strerror(-err));
+    return err;
+}
+
 void stop_loader()
 {
     ring_buffer__free(rb);
