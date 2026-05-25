@@ -23,7 +23,7 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,9 @@ class ContainerResolver:
 
     TARGET_LABEL_KEY = "sovnd.monitor"
 
-    def __init__(self, target_label: Optional[str] = None):
+    def __init__(self, target_label: str | None = None):
         self.target_label = target_label or os.environ.get("TARGET_LABEL")
-        self._cache: Dict[int, Dict[str, Any]] = {}
+        self._cache: dict[int, dict[str, Any]] = {}
         self._lock = threading.RLock()
         self._docker = None
 
@@ -54,7 +54,7 @@ class ContainerResolver:
 
     # ── public API ───────────────────────────────────────────────────
 
-    def resolve(self, cgroup_id: int) -> Optional[Dict[str, Any]]:
+    def resolve(self, cgroup_id: int) -> dict[str, Any] | None:
         """Resolve a cgroup v2 inode to container metadata, or ``None``.
 
         Hot path: cache lookup. On miss, scan the docker daemon, populate
@@ -73,7 +73,7 @@ class ContainerResolver:
         with self._lock:
             return self._cache.get(cgroup_id)
 
-    def find_target_cgroup_inode(self) -> Optional[int]:
+    def find_target_cgroup_inode(self) -> int | None:
         """Look up the cgroup inode of the (single) target container.
 
         Used at agent startup to populate the eBPF ``filter_config`` map
@@ -122,7 +122,7 @@ class ContainerResolver:
             with self._lock:
                 self._cache[inode] = meta
 
-    def _container_cgroup_inode(self, container) -> Optional[int]:
+    def _container_cgroup_inode(self, container) -> int | None:
         """Return the real cgroup v2 inode for ``container``'s init PID."""
         try:
             pid = container.attrs.get("State", {}).get("Pid", 0)
@@ -141,7 +141,7 @@ class ContainerResolver:
         return self._stat_cgroup_inode(path)
 
     @staticmethod
-    def _extract_cgroup_path(cgroup_data: str) -> Optional[str]:
+    def _extract_cgroup_path(cgroup_data: str) -> str | None:
         """Return the cgroup hierarchy path from a /proc/<pid>/cgroup
         file, preferring the cgroup v2 entry (``0::/...``)."""
         v1_fallback = None
@@ -155,7 +155,7 @@ class ContainerResolver:
         return v1_fallback
 
     @staticmethod
-    def _stat_cgroup_inode(cgroup_path: str) -> Optional[int]:
+    def _stat_cgroup_inode(cgroup_path: str) -> int | None:
         """``stat()`` the cgroup path under /sys/fs/cgroup; the inode
         number matches what ``bpf_get_current_cgroup_id()`` returns."""
         rel = cgroup_path.lstrip("/")

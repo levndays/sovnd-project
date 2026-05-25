@@ -56,12 +56,10 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import psutil
-
 
 ROOT = Path(__file__).parent.parent
 DB_PATH = ROOT / "data" / "sovnd.db"
@@ -122,14 +120,14 @@ class FinalReport:
     recall_mean:          float
     latency_median_ms:    float
     latency_p95_ms:       float
-    samples:              List[RunSummary] = field(default_factory=list)
+    samples:              list[RunSummary] = field(default_factory=list)
     methodology:          str = ""
 
 
 # ── helpers ─────────────────────────────────────────────────────────
 
 
-def find_agent_process() -> Optional[psutil.Process]:
+def find_agent_process() -> psutil.Process | None:
     """Find the python interpreter running apps/agent.py.
 
     Strict match: argv[0] must look like a python binary AND argv
@@ -179,7 +177,7 @@ def require_root() -> None:
 
 
 def alerts_since(conn: sqlite3.Connection, since_iso: str,
-                 pattern: Optional[str] = None) -> List[Dict]:
+                 pattern: str | None = None) -> list[dict]:
     """All alerts written to the DB after ``since_iso``."""
     if pattern:
         rows = conn.execute(
@@ -209,7 +207,7 @@ def now_iso() -> str:
 
 def measure_cpu_and_eps(proc: psutil.Process,
                         window_s: int,
-                        target_eps: int) -> Dict[str, float]:
+                        target_eps: int) -> dict[str, float]:
     """Run a controlled-rate openat() loop in the background and
     sample agent CPU + observed EPS over ``window_s`` seconds."""
 
@@ -240,8 +238,8 @@ while time.time() < end:
     time.sleep(1.0)
     proc.cpu_percent(interval=None)  # prime baseline
 
-    cpu_samples: List[float] = []
-    eps_samples: List[float] = []
+    cpu_samples: list[float] = []
+    eps_samples: list[float] = []
     for _ in range(window_s):
         time.sleep(1.0)
         cpu_samples.append(proc.cpu_percent(interval=None))
@@ -287,7 +285,7 @@ def _trigger_open(path: str) -> None:
         pass  # openat already fired; reads can hang, we don't care
 
 
-def measure_latency(timeout_s: float = 5.0) -> List[float]:
+def measure_latency(timeout_s: float = 5.0) -> list[float]:
     """Trigger each positive IOC, time the round-trip to DB.
 
     Returns a list of per-IOC latencies in milliseconds. IOCs that
@@ -295,7 +293,7 @@ def measure_latency(timeout_s: float = 5.0) -> List[float]:
     timeout (which makes the p95 visible if anything's broken).
     """
     conn = sqlite3.connect(DB_PATH)
-    latencies: List[float] = []
+    latencies: list[float] = []
 
     for ioc in POSITIVES:
         baseline_iso = now_iso()
@@ -317,7 +315,7 @@ def measure_latency(timeout_s: float = 5.0) -> List[float]:
     return latencies
 
 
-def measure_precision_recall() -> Dict[str, int]:
+def measure_precision_recall() -> dict[str, int]:
     """Replay positives + negatives, count TP/FP/FN from DB."""
     conn = sqlite3.connect(DB_PATH)
     baseline_iso = now_iso()
@@ -388,7 +386,7 @@ def run_once(proc: psutil.Process,
 # ── orchestration ───────────────────────────────────────────────────
 
 
-def aggregate(samples: List[RunSummary],
+def aggregate(samples: list[RunSummary],
               runs: int, target_eps: int, window: int) -> FinalReport:
     cpu = [s.cpu_pct for s in samples]
     rss = [s.rss_mb for s in samples]
@@ -396,7 +394,7 @@ def aggregate(samples: List[RunSummary],
     lat_med = [s.latency_median_ms for s in samples]
     lat_p95 = [s.latency_p95_ms for s in samples]
 
-    def safe_std(xs: List[float]) -> float:
+    def safe_std(xs: list[float]) -> float:
         return statistics.stdev(xs) if len(xs) > 1 else 0.0
 
     # Aggregate confusion counts across runs so a degenerate run
@@ -470,7 +468,7 @@ def main() -> int:
     proc = require_agent()
     print(f"Agent PID {proc.pid}, DB {DB_PATH}")
 
-    samples: List[RunSummary] = []
+    samples: list[RunSummary] = []
     for i in range(1, args.runs + 1):
         print(f"  Run {i}/{args.runs}…", flush=True)
         samples.append(run_once(proc, args.window, args.target_eps))

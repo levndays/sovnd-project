@@ -12,9 +12,9 @@ launched in unusual contexts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.config import (
     CONTEXT_COEFFICIENTS,
@@ -31,15 +31,15 @@ class Alert:
     comm:           str
     score:          float
     severity:       str
-    reasons:        List[str] = field(default_factory=list)
-    breakdown:      Dict[str, float] = field(default_factory=dict)
-    container_info: Optional[Dict[str, Any]] = None
+    reasons:        list[str] = field(default_factory=list)
+    breakdown:      dict[str, float] = field(default_factory=dict)
+    container_info: dict[str, Any] | None = None
 
 
 class ScoringEngine:
     """Weighted-sum explainable scoring engine."""
 
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Settings | None = None):
         cfg = settings or get_settings()
         self.threshold = cfg.score_threshold
         self.critical  = cfg.score_critical
@@ -52,12 +52,12 @@ class ScoringEngine:
 
     def compute(
         self,
-        event:            Dict[str, Any],
-        stat_report:      Dict[str, Any],
-        sig_match:        Optional[Dict[str, Any]] = None,
-        graph_heuristics: Optional[List[str]] = None,
-        container_info:   Optional[Dict[str, Any]] = None,
-    ) -> Optional[Alert]:
+        event:            dict[str, Any],
+        stat_report:      dict[str, Any],
+        sig_match:        dict[str, Any] | None = None,
+        graph_heuristics: list[str] | None = None,
+        container_info:   dict[str, Any] | None = None,
+    ) -> Alert | None:
         """Evaluate an event against all detection vectors.
 
         Returns an ``Alert`` if the composite score exceeds the
@@ -65,7 +65,7 @@ class ScoringEngine:
         """
         comp   = {"signature": 0.0, "statistical": 0.0,
                   "graph": 0.0, "ngram": 0.0}
-        reasons: List[str] = []
+        reasons: list[str] = []
 
         # ── signature ──────────────────────────────────────
         if sig_match:

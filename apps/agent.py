@@ -1,9 +1,9 @@
-import time
 import json
+import logging
 import os
 import sys
+import time
 from dataclasses import asdict
-import logging
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -11,13 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 logger = logging.getLogger("agent")
 
-from drivers.ebpf.bridge import EBPFAgent
 from core.config import get_settings
 from core.detection.signature import SignatureDetector
 from core.detection.statistical import StatisticalDetector
+from core.graph.builder import ProvenanceGraphBuilder
 from core.metrics.engine import MetricsEngine
 from core.scoring.engine import ScoringEngine
-from core.graph.builder import ProvenanceGraphBuilder
+from drivers.ebpf.bridge import EBPFAgent
 from internal.container.resolver import ContainerResolver
 from internal.storage.sqlite import StorageManager
 

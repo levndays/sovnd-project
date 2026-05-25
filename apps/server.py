@@ -1,13 +1,13 @@
 import asyncio
 import json
+import subprocess
 import sys
 import time
-import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Response
+from fastapi import Depends, FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from core.config import get_settings

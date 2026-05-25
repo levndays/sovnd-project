@@ -1,10 +1,10 @@
 import ctypes
 import logging
-import threading
 import queue
+import threading
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ FD_TYPE_NAMES = {
     FD_TYPE_PIPE: "pipe", FD_TYPE_ANON: "anon", FD_TYPE_UNKNOWN: "unknown"
 }
 
-def event_to_dict(evt: Event) -> Dict[str, Any]:
+def event_to_dict(evt: Event) -> dict[str, Any]:
     return {
         "pid":         evt.pid,
         "tgid":        evt.tgid,
@@ -102,7 +102,7 @@ class EBPFAgent:
             except Exception:
                 time.sleep(0.1)
 
-    def get_event(self, timeout: float = 1.0) -> Optional[Dict[str, Any]]:
+    def get_event(self, timeout: float = 1.0) -> dict[str, Any] | None:
         try:
             evt = self._event_queue.get(timeout=timeout)
             return event_to_dict(evt)

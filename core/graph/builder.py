@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import networkx as nx
 
-from core.config import get_settings, Settings
+from core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class ProvenanceGraphBuilder:
     """In-memory directed provenance graph."""
 
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Settings | None = None):
         cfg = settings or get_settings()
         self._graph = nx.DiGraph()
         self._hi_conn_thresh = cfg.graph_high_connectivity_nodes
@@ -35,7 +35,7 @@ class ProvenanceGraphBuilder:
 
     # ── public API ───────────────────────────────────────────
 
-    def add_event(self, event: Dict[str, Any]) -> None:
+    def add_event(self, event: dict[str, Any]) -> None:
         """Ingest a single eBPF event into the graph."""
         pid      = event.get("pid")
         comm     = event.get("comm", "unknown")
@@ -56,13 +56,13 @@ class ProvenanceGraphBuilder:
                 timestamp=datetime.now(timezone.utc).isoformat(),
             )
 
-    def heuristics(self, pid: int, event: Dict[str, Any]) -> List[str]:
+    def heuristics(self, pid: int, event: dict[str, Any]) -> list[str]:
         """Evaluate structural heuristics on the current subgraph.
 
         Returns a list of heuristic tags (e.g. ``high_connectivity``)
         for the scoring engine.
         """
-        result: List[str] = []
+        result: list[str] = []
         sub = self.get_process_subgraph(pid)
 
         if sub.number_of_nodes() > self._hi_conn_thresh:
@@ -93,7 +93,7 @@ class ProvenanceGraphBuilder:
         nodes = [proc_node] + list(self._graph.neighbors(proc_node))
         return self._graph.subgraph(nodes)
 
-    def serialized(self) -> Dict[str, Any]:
+    def serialized(self) -> dict[str, Any]:
         """Serialise the full graph to the node-link JSON format."""
         return nx.node_link_data(self._graph)
 

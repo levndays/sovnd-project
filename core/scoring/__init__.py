@@ -1,3 +1,3 @@
-from core.scoring.engine import ScoringEngine, Alert
+from core.scoring.engine import Alert, ScoringEngine
 
 __all__ = ["ScoringEngine", "Alert"]

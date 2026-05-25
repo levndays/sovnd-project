@@ -6,9 +6,9 @@ sensitive file paths and suspicious command invocations.
 
 from __future__ import annotations
 
-import re
 import logging
-from typing import Any, Dict, List, Optional, Pattern
+from re import Pattern
+from typing import Any
 
 from core.config import CRITICAL_PATH_PATTERNS, SUSPICIOUS_COMMANDS
 
@@ -25,23 +25,23 @@ class SignatureDetector:
 
     def __init__(
         self,
-        critical_paths: Optional[List[Pattern]] = None,
-        suspicious_commands: Optional[List[str]] = None,
+        critical_paths: list[Pattern] | None = None,
+        suspicious_commands: list[str] | None = None,
     ):
         self._critical_paths = critical_paths or CRITICAL_PATH_PATTERNS
         self._suspicious = suspicious_commands or SUSPICIOUS_COMMANDS
 
     @property
-    def critical_paths(self) -> List[Pattern]:
+    def critical_paths(self) -> list[Pattern]:
         return self._critical_paths
 
     @property
-    def suspicious_comm(self) -> List[str]:
+    def suspicious_comm(self) -> list[str]:
         return self._suspicious
 
     # ── public API ───────────────────────────────────────────
 
-    def analyze(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def analyze(self, event: dict[str, Any]) -> dict[str, Any] | None:
         """Scan a single eBPF event for signature matches.
 
         Returns

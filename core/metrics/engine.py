@@ -19,9 +19,9 @@ import logging
 import time
 from collections import deque
 from enum import IntEnum
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any
 
-from core.config import get_settings, Settings
+from core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +58,9 @@ class _Profile:
     def __init__(self, n_features: int, ngram_n: int, history_len: int):
         self.mu           = [0.0] * n_features
         self.sigma        = [1.0] * n_features
-        self.window:      Deque[List[float]] = deque(maxlen=history_len)
-        self.ngram_buf:   Deque[int]         = deque(maxlen=ngram_n)
-        self.ngram_counts: Dict[Tuple[int, ...], int] = {}
+        self.window:      deque[list[float]] = deque(maxlen=history_len)
+        self.ngram_buf:   deque[int]         = deque(maxlen=ngram_n)
+        self.ngram_counts: dict[tuple[int, ...], int] = {}
 
         self.raw_op       = 0
         self.raw_open     = 0
@@ -81,20 +81,20 @@ class MetricsEngine:
 
     N_FEATURES = 7
 
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Settings | None = None):
         cfg = settings or get_settings()
         self.alpha       = cfg.ewma_alpha
         self.n_gram_size = cfg.n_gram_size
         self._hist_len   = cfg.history_maxlen
-        self._profiles: Dict[int, _Profile] = {}
+        self._profiles: dict[int, _Profile] = {}
 
     @property
-    def profiles(self) -> Dict[int, _Profile]:
+    def profiles(self) -> dict[int, _Profile]:
         return self._profiles
 
     # ── public API ───────────────────────────────────────────
 
-    def update(self, event: Dict[str, Any]) -> None:
+    def update(self, event: dict[str, Any]) -> None:
         """Ingest a single eBPF event and update counters.
 
         Once per second the accumulated counters are snapshotted
@@ -139,7 +139,7 @@ class MetricsEngine:
         if now - p.last_snap >= 1.0:
             self._snapshot(pid, now)
 
-    def get_current_vector(self, pid: int) -> List[float]:
+    def get_current_vector(self, pid: int) -> list[float]:
         """Return the most recent metric-snapshot vector."""
         p = self._profiles.get(pid)
         if p and p.window:
@@ -148,13 +148,13 @@ class MetricsEngine:
             return list(p.mu)
         return [0.0] * self.N_FEATURES
 
-    def get_z_scores(self, pid: int, vec: List[float]) -> List[float]:
+    def get_z_scores(self, pid: int, vec: list[float]) -> list[float]:
         """Compute per-component Z-scores against the EWMA baseline."""
         p = self._profiles.get(pid)
         if not p:
             return [0.0] * len(vec)
         z = []
-        for v, m, s in zip(vec, p.mu, p.sigma):
+        for v, m, s in zip(vec, p.mu, p.sigma, strict=False):
             denom = s if s > 1e-9 else 1e-9
             z.append((v - m) / denom)
         return z
@@ -208,7 +208,7 @@ class MetricsEngine:
         # EWMA update
         old_mu = p.mu
         a = self.alpha
-        new_mu = [a * v + (1.0 - a) * o for v, o in zip(vec, old_mu)]
+        new_mu = [a * v + (1.0 - a) * o for v, o in zip(vec, old_mu, strict=False)]
         p.mu = new_mu
 
         for i in range(self.N_FEATURES):

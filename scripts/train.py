@@ -69,8 +69,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 ROOT = Path(__file__).parent.parent
 
@@ -84,17 +83,17 @@ class BaselineSnapshot:
     window_seconds:  int
     captured_at:     str            # ISO-8601 UTC
     n_processes:     int
-    profiles:        Dict[str, Dict[str, Any]]  # identifier -> {mu, sigma, ...}
+    profiles:        dict[str, dict[str, Any]]  # identifier -> {mu, sigma, ...}
 
 
 @dataclass
 class ValidationCurves:
     """Precision/recall/FPR/TPR curve over a threshold sweep."""
-    thresholds: List[float]
-    precision:  List[float]
-    recall:     List[float]
-    fpr:        List[float]
-    tpr:        List[float]
+    thresholds: list[float]
+    precision:  list[float]
+    recall:     list[float]
+    fpr:        list[float]
+    tpr:        list[float]
 
 
 @dataclass
@@ -210,7 +209,7 @@ def _cmd_tune(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__.strip().split("\n\n", 1)[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,

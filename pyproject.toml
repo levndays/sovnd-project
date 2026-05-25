@@ -24,6 +24,7 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0",
+    "ruff>=0.6",
 ]
 
 [tool.setuptools.packages.find]
@@ -34,3 +35,27 @@ minversion = "7.0"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["venv", ".venv", "drivers/ebpf/tracer.skel.h"]
+
+[tool.ruff.lint]
+select = ["F", "I", "W", "B", "C4", "UP", "SIM"]
+ignore = [
+    # FastAPI uses `param: T = Depends(...)` as its canonical
+    # dependency-injection idiom; B008 is a false positive here.
+    "B008",
+    # Two narrow stylistic guidelines we accept on purpose:
+    # SIM102 nested-if in `SignatureDetector.analyze` keeps the
+    # IOC vs. heuristic decision tree visually obvious.
+    "SIM102",
+    # SIM105 try/except/pass in `validate_performance._trigger_open`
+    # documents WHY the timeout is swallowed (see inline comment),
+    # which contextlib.suppress hides.
+    "SIM105",
+    # SIM117 sqlite context-manager nesting is intentional: outer
+    # `_lock` must wrap inner connection open/close.
+    "SIM117",
+]

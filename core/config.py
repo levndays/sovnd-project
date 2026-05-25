@@ -9,8 +9,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Pattern
-
+from re import Pattern
 
 # ── file-system defaults ────────────────────────────────────────
 
@@ -66,7 +65,7 @@ class Settings:
 
 # ── IOC (Indicators of Compromise) ───────────────────────────────
 
-CRITICAL_PATH_PATTERNS: List[Pattern] = [
+CRITICAL_PATH_PATTERNS: list[Pattern] = [
     re.compile(r'^/etc/shadow$'),
     re.compile(r'^/etc/sudoers$'),
     re.compile(r'^/var/run/docker\.sock$'),
@@ -74,7 +73,7 @@ CRITICAL_PATH_PATTERNS: List[Pattern] = [
     re.compile(r'^/proc/kcore$'),
 ]
 
-SUSPICIOUS_COMMANDS: List[str] = [
+SUSPICIOUS_COMMANDS: list[str] = [
     "nc", "ncat", "wget", "curl",
 ]
 
@@ -91,7 +90,7 @@ SUSPICIOUS_COMMANDS: List[str] = [
 
 DEFAULT_CONTEXT_COEFFICIENT: float = 1.0
 
-CONTEXT_COEFFICIENTS: Dict[str, float] = {
+CONTEXT_COEFFICIENTS: dict[str, float] = {
     # quiet, mostly-trusted system housekeeping
     "systemd":         0.5,
     "systemd-logind":  0.5,
@@ -121,8 +120,16 @@ _default = Settings(score_threshold=_level_thresholds.get(THREAT_LEVEL, 12.0))
 
 
 def get_settings() -> Settings:
+    """Return the active :class:`Settings` singleton."""
     return _default
 
+
 def set_settings(s: Settings) -> None:
+    """Replace the active :class:`Settings` singleton.
+
+    Intended for tests that need to override one or two values
+    (e.g. ``score_threshold``) without mutating shared state across
+    test cases. Pair with :func:`get_settings` to restore.
+    """
     global _default
     _default = s

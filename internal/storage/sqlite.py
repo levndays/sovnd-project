@@ -1,11 +1,11 @@
-import sqlite3
 import json
 import logging
 import os
+import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +14,8 @@ class StorageManager:
     Handles persistence for security profiles and alerts (Section 3.2).
     Uses a thread-safe connection pattern and context managers.
     """
-    
-    def __init__(self, db_path: Optional[str] = None):
+
+    def __init__(self, db_path: str | None = None):
         self.db_path = db_path or os.environ.get("DB_PATH", "data/sovnd.db")
         self._lock = threading.Lock()
         self._init_db()
@@ -56,13 +56,11 @@ class StorageManager:
                 )
             """)
             conn.commit()
-        try:
+        with suppress(PermissionError):
             os.chmod(self.db_path, 0o644)
-        except PermissionError:
-            pass
         logger.info("Database initialized at %s", self.db_path)
 
-    def save_alert(self, alert_data: Dict[str, Any]):
+    def save_alert(self, alert_data: dict[str, Any]):
         """Persists a generated alert."""
         with self._lock:
             with self._get_connection() as conn:
@@ -80,12 +78,10 @@ class StorageManager:
                     )
                 )
                 conn.commit()
-        try:
+        with suppress(PermissionError):
             os.chmod(self.db_path, 0o644)
-        except PermissionError:
-            pass
 
-    def get_recent_alerts(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_recent_alerts(self, limit: int = 100) -> list[dict[str, Any]]:
         """Retrieves most recent security alerts."""
         with self._get_connection() as conn:
             cursor = conn.execute(
@@ -103,9 +99,8 @@ class StorageManager:
 
     def save_profile(self, identifier: str, mu: bytes, sigma: bytes):
         """Saves or updates a behavioral profile."""
-        with self._lock:
-            with self._get_connection() as conn:
-                conn.execute("""
+        with self._lock, self._get_connection() as conn:
+            conn.execute("""
                     INSERT INTO profiles (identifier, mu, sigma, last_updated)
                     VALUES (?, ?, ?, ?)
                     ON CONFLICT(identifier) DO UPDATE SET
@@ -113,9 +108,9 @@ class StorageManager:
                         sigma=excluded.sigma,
                         last_updated=excluded.last_updated
                 """, (identifier, mu, sigma, datetime.now().isoformat()))
-                conn.commit()
+            conn.commit()
 
-    def get_profile(self, identifier: str) -> Optional[Dict[str, Any]]:
+    def get_profile(self, identifier: str) -> dict[str, Any] | None:
         """Retrieves a behavioral profile by identifier."""
         with self._get_connection() as conn:
             cursor = conn.execute(
@@ -126,12 +121,9 @@ class StorageManager:
 
     def clear_alerts(self):
         """Clears all alerts from the database."""
-        with self._lock:
-            with self._get_connection() as conn:
-                conn.execute("DELETE FROM alerts")
-                conn.commit()
-        try:
+        with self._lock, self._get_connection() as conn:
+            conn.execute("DELETE FROM alerts")
+            conn.commit()
+        with suppress(PermissionError):
             os.chmod(self.db_path, 0o644)
-        except PermissionError:
-            pass
         logger.info("All alerts cleared")

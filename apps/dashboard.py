@@ -1,12 +1,13 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
 import json
+import subprocess
 import sys
 import time
-import subprocess
 from datetime import datetime
 from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -28,17 +29,17 @@ st.set_page_config(
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
-    .metric-card { 
-        background-color: #1e293b; padding: 20px; border-radius: 8px; 
+    .metric-card {
+        background-color: #1e293b; padding: 20px; border-radius: 8px;
         border-left: 5px solid #3b82f6; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
-    .alert-critical { 
-        background-color: #450a0a; border-left: 5px solid #ef4444; 
+    .alert-critical {
+        background-color: #450a0a; border-left: 5px solid #ef4444;
         padding: 15px; border-radius: 5px; margin-bottom: 10px;
     }
     .stButton>button { width: 100%; font-weight: bold; }
     .attack-btn>button { background-color: #7f1d1d !important; color: white !important; border: 1px solid #ef4444 !important; }
-    
+
     /* Attack flash animation */
     @keyframes flash-red {
         0% { box-shadow: inset 0 0 0 0 rgba(239, 68, 68, 0); }
@@ -79,21 +80,21 @@ def launch_real_attack():
     try:
         # 1. Trigger /etc/shadow read alert (Signature Match)
         subprocess.run(["cat", "/etc/shadow"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
+
         # 2. Trigger Docker sock access alert (Signature Match)
         subprocess.run(["cat", "/var/run/docker.sock"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
+
         # 3. Trigger suspicious shell (Heuristic)
         subprocess.run(["bash", "-c", "echo 'stealth shell'"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
+
         # Mark attack time for graph highlighting
         st.session_state.attack_events.append(datetime.now())
         # Clean up old attack markers (older than 60 seconds)
         st.session_state.attack_events = [
-            t for t in st.session_state.attack_events 
+            t for t in st.session_state.attack_events
             if (datetime.now() - t).total_seconds() < 60
         ]
-        
+
         return True
     except Exception as e:
         st.error(f"Failed to launch attack: {e}")
@@ -104,13 +105,13 @@ with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/shield.png", width=60)
     st.title("SovND Control")
     st.markdown("---")
-    
+
     st.session_state.live_monitor = st.toggle("🔴 Live Auto-Refresh", value=st.session_state.live_monitor)
-    
+
     st.markdown("---")
     st.markdown("### ⚠️ Live Demo Actions")
     st.caption("These buttons execute REAL scripts on the host machine.")
-    
+
     # Wrap button in custom class for red styling
     st.markdown('<div class="attack-btn">', unsafe_allow_html=True)
     if st.button("💥 LAUNCH REAL ATTACK", use_container_width=True):
@@ -178,12 +179,12 @@ with col_chart:
     st.markdown("### 📈 Live System Call Throughput")
     if len(st.session_state.syscall_history) > 1:
         df_history = pd.DataFrame(st.session_state.syscall_history)
-        
+
         # Create the chart
-        fig = px.area(df_history, x='time', y='events', 
+        fig = px.area(df_history, x='time', y='events',
                      color_discrete_sequence=['#3b82f6'],
                      template="plotly_dark")
-        
+
         # Add red zones for attack periods (last 10 seconds after each attack)
         now = datetime.now()
         for attack_time in st.session_state.attack_events:
@@ -194,17 +195,17 @@ with col_chart:
                 end_ts = min(attack_ts + 5, now.timestamp())
                 if end_ts > attack_ts:
                     fig.add_vrect(
-                        x0=attack_ts, 
+                        x0=attack_ts,
                         x1=end_ts,
-                        fillcolor="rgba(239, 68, 68, 0.25)", 
-                        opacity=0.25, 
+                        fillcolor="rgba(239, 68, 68, 0.25)",
+                        opacity=0.25,
                         line_width=0,
-                        annotation_text="ATTACK", 
+                        annotation_text="ATTACK",
                         annotation_position="top left",
                         annotation_font_color="red"
                     )
-        
-        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=350,
+
+        fig.update_layout(margin={"l": 0, "r": 0, "t": 0, "b": 0}, height=350,
                           xaxis_title="", yaxis_title="Events / Sec")
         st.plotly_chart(fig, use_container_width=True)
     else:

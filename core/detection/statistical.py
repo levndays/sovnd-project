@@ -7,12 +7,12 @@ significantly from the learned normal-behaviour profile.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from core.metrics.engine import MetricsEngine
 
-from core.config import get_settings, Settings
+from core.config import Settings, get_settings
 
 
 class StatisticalDetector:
@@ -29,8 +29,8 @@ class StatisticalDetector:
 
     def __init__(
         self,
-        engine: "MetricsEngine",
-        settings: Optional[Settings] = None,
+        engine: MetricsEngine,
+        settings: Settings | None = None,
     ):
         cfg = settings or get_settings()
         self._engine      = engine
@@ -38,14 +38,14 @@ class StatisticalDetector:
         self._severe_z    = cfg.z_threshold_severe
 
     @property
-    def engine(self) -> "MetricsEngine":
+    def engine(self) -> MetricsEngine:
         return self._engine
 
     # ── public API ───────────────────────────────────────────
 
     def evaluate(
-        self, pid: int, current_vector: List[float]
-    ) -> Dict[str, Any]:
+        self, pid: int, current_vector: list[float]
+    ) -> dict[str, Any]:
         """Score the current metric vector against the EWMA baseline.
 
         Returns
@@ -63,7 +63,7 @@ class StatisticalDetector:
 
         p = self._engine.profiles.get(pid)
         mu = p.mu if p else current_vector
-        distance = sum((c - m) ** 2 for c, m in zip(current_vector, mu)) ** 0.5
+        distance = sum((c - m) ** 2 for c, m in zip(current_vector, mu, strict=False)) ** 0.5
 
         # n-gram anomaly (0..1): high when the latest syscall window
         # is rare against the per-PID baseline. See §2.1 (n-gram-tree).
@@ -82,7 +82,7 @@ class StatisticalDetector:
     # ── helpers ──────────────────────────────────────────────
 
     @staticmethod
-    def _no_data(pid: int) -> Dict[str, Any]:
+    def _no_data(pid: int) -> dict[str, Any]:
         return {
             "pid":                pid,
             "is_anomalous":       False,
