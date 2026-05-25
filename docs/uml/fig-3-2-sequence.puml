@@ -1,0 +1,112 @@
+@startuml fig-3-2-sequence
+'==========================================================================
+' Рисунок 3.2 — Діаграма послідовності процесу перехоплення та аналізу
+'               системних подій
+'
+' Процесний погляд (Process View) за моделлю 4+1.
+' Тип діаграми: Sequence diagram (UML 2.5).
+'
+' Відображає реалізовану модель конкурентності з §3.3.1:
+'   Процес 1 — Agent (apps/agent.py): два потоки T_poll + T_main
+'   Процес 2 — API Server (apps/server.py): окремий процес uvicorn
+'==========================================================================
+
+' UML-сумісні наконечники стрілок
+skinparam style strictuml
+skinparam shadowing false
+skinparam defaultFontName "DejaVu Sans"
+skinparam sequenceMessageAlign center
+hide footbox
+
+' ── Lifelines ──────────────────────────────────────────────────────
+participant "Kernel\n(eBPF tracer)"                  as Kernel
+participant "T_poll\n(Ring Buffer Poller)"           as Tpoll
+participant "T_main\n(Main Detection Loop)"          as Tmain
+database    "data/sovnd.db\n(SQLite)"                as DB
+participant "API Server\n(apps/server.py)"           as Api
+actor       "Аналітик"                                as Analyst
+
+== Перехоплення події ядром ==
+
+Kernel -> Kernel : sys_enter_openat / sys_exit_openat\nin-eBPF filter\n(cgroup, шумні шляхи, rate limit)
+activate Kernel
+Kernel ->> Tpoll : bpf_ringbuf_submit(event)
+deactivate Kernel
+
+== Доставка події у простір користувача ==
+
+activate Tpoll
+Tpoll ->> Tmain : self._event_queue.put(Event)
+note right of Tpoll
+  фоновий daemon-потік;
+  не виконує аналітики —
+  лише lock-free доставка
+end note
+deactivate Tpoll
+
+== Послідовна обробка події в T_main ==
+
+activate Tmain
+Tmain -> Tmain : MetricsEngine.update(event)
+activate Tmain
+Tmain --> Tmain : (μ_i, σ_i, n-gram) оновлено
+deactivate Tmain
+
+Tmain -> Tmain : current_vec = get_current_vector(pid)
+Tmain -> Tmain : StatisticalDetector.evaluate(pid, vec)
+activate Tmain
+Tmain --> Tmain : stat_report\n(max_z, ngram_anomaly)
+deactivate Tmain
+
+Tmain -> Tmain : SignatureDetector.analyze(event)
+activate Tmain
+Tmain --> Tmain : sig_match | None
+deactivate Tmain
+
+Tmain -> Tmain : ProvenanceGraphBuilder.add_event(event)
+Tmain -> Tmain : ProvenanceGraphBuilder.heuristics(pid, event)
+activate Tmain
+Tmain --> Tmain : graph_heuristics[]
+deactivate Tmain
+
+Tmain -> Tmain : ContainerResolver.resolve(cgroup_id)
+activate Tmain
+Tmain --> Tmain : container_info | None
+deactivate Tmain
+
+Tmain -> Tmain : ScoringEngine.compute(...)
+activate Tmain
+Tmain --> Tmain : Alert | None\nS = (Σ wᵢ·dᵢ) · P_ctx
+deactivate Tmain
+
+== Збереження алерта (умовно) ==
+
+alt S ≥ T  (alert сформовано)
+    Tmain -> DB : StorageManager.save_alert(alert)
+    activate DB
+    DB --> Tmain : OK
+    deactivate DB
+else S < T
+    Tmain -> Tmain : skip (no alert)
+end
+
+== Паралельно: API Server обслуговує дашборд ==
+
+note over Api, Analyst
+  Окремий процес uvicorn;
+  не блокується агентом
+end note
+
+loop кожні 500 мс (2 Гц)
+    Api -> DB : get_recent_alerts(limit=10)
+    activate DB
+    DB --> Api : alerts[]
+    deactivate DB
+
+    Api -> Api : read heartbeat.json\n(EPS)
+    Api ->> Analyst : WebSocket\n{eps, alerts}
+end
+
+deactivate Tmain
+
+@enduml

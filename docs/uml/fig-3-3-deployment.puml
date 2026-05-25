@@ -1,0 +1,82 @@
+@startuml fig-3-3-deployment
+'==========================================================================
+' Рисунок 3.3 — Схема розгортання компонентів системи у контейнеризованому
+'               середовищі Docker
+'
+' Фізичний погляд (Physical / Deployment View) за моделлю 4+1.
+' Тип діаграми: Deployment diagram (UML 2.5).
+'
+' Стереотипи відповідають UML 2.5:
+'   «device»               — фізичний / віртуальний хост
+'   «executionEnvironment» — середовище виконання
+'   «artifact»             — артефакт розгортання
+'==========================================================================
+
+skinparam shadowing false
+skinparam defaultFontName "DejaVu Sans"
+skinparam linetype ortho
+
+' ── Хост ─────────────────────────────────────────────────────────────
+node "Linux Host" as Host <<device>> {
+
+    node "Linux kernel ≥ 5.8\n(BTF enabled)" as LKernel <<executionEnvironment>> {
+        artifact "/sys/kernel/btf/vmlinux"   as BTF
+        artifact "eBPF VM\n(JIT-compiled programs)" as EbpfVm
+        artifact "/sys/fs/cgroup\n(cgroup v2 hierarchy)" as Cgroups
+        artifact "/sys/fs/bpf/sovnd/\n(pinned maps)" as PinnedMaps
+    }
+
+    node "Docker Engine" as DockerEng <<executionEnvironment>> {
+
+        node "sovnd-monitor\n(privileged container)" as MonitorCtr <<container>> {
+            artifact "drivers/ebpf/libloader.so" as Libloader
+            artifact "drivers/ebpf/tracer.bpf.o" as BpfObj
+            artifact "apps/agent.py\n(Python 3.11)" as Agent
+            artifact "apps/server.py\n(uvicorn + FastAPI)" as Server
+            artifact "web/index.html\n(Chart.js)" as Web
+            database "data/sovnd.db\n(SQLite volume)" as Db
+        }
+
+        node "web-app\n(unprivileged container)" as WebappCtr <<container>> {
+            artifact "nginx:latest\n(label: sovnd.monitor=true)" as Nginx
+        }
+    }
+}
+
+' ── Зовнішній актор ──────────────────────────────────────────────────
+node "Робоча станція аналітика" as Workstation <<device>> {
+    artifact "Web-браузер" as Browser
+}
+
+' ── Маніфестація: програмні артефакти всередині контейнера ──────────
+' (нативна семантика deployment diagram)
+
+' ── Шляхи комунікації (UML «communication path») ────────────────────
+
+' libloader.so завантажує eBPF-програму у ядро
+Agent ..> Libloader : <<use>>\nctypes
+Libloader ..> EbpfVm : <<deploy>>\nbpf() syscall + libbpf
+Libloader ..> PinnedMaps : <<pin>>\nbpf_obj_pin
+
+' Передача подій з ядра до агента (lock-free)
+EbpfVm ..> Agent : <<RingBuffer>>\nBPF_MAP_TYPE_RINGBUF
+
+' Зворотний канал — звуження фільтра до цільового cgroup
+Agent ..> EbpfVm : <<filter_config>>\nset_target_cgroup(inode)
+
+' Container Metadata Resolver
+Agent ..> DockerEng : <<DockerSDK>>\n/var/run/docker.sock
+Agent ..> Cgroups   : stat() per cgroup-inode
+
+' Запис алертів
+Agent ..> Db : <<JDBC-like>>\nsqlite3
+
+' web-app — цільовий контейнер; його syscalls перехоплюються прозоро
+WebappCtr ..> LKernel : <<syscalls>>\n(перехоплюються eBPF)
+
+' Server та Web
+Server ..> Db : SELECT alerts
+Server ..> Web : статичний контент
+Browser ..> Server : <<HTTP/WebSocket>>\ntcp://localhost:8000
+
+@enduml

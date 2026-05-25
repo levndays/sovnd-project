@@ -1,0 +1,139 @@
+@startuml fig-3-1-logical
+'==========================================================================
+' Рисунок 3.1 — Логічна структура та взаємодія компонентів СОВНД
+'
+' Логічний погляд (Logical View) за моделлю 4+1.
+' Тип діаграми: Component diagram (UML 2.5).
+'
+' Кожен компонент відповідає елементу з §3.2 «Логічний погляд» і має
+' пряме відображення на код у репозиторії (вказано у дужках).
+' Лолі-поп (○─) — provided interface; розетка (─( ) — required interface.
+'==========================================================================
+
+skinparam componentStyle uml2
+skinparam shadowing false
+skinparam defaultFontName "DejaVu Sans"
+skinparam linetype ortho
+
+' ── Простір ядра ───────────────────────────────────────────────────
+package "Простір ядра (Linux kernel ≥ 5.8)" as KernelPkg {
+
+    component "eBPF Probe Subsystem" as Probe <<eBPF>>
+    note bottom of Probe
+        drivers/ebpf/src/tracer.bpf.c
+        drivers/ebpf/src/filter.bpf.c
+        drivers/ebpf/src/fd_tracker.bpf.c
+        Tracepoints: openat, close, read,
+        write, socket, pipe2
+    end note
+
+    component "Kernel-State Maps" as Maps <<BPF maps>>
+    note bottom of Maps
+        drivers/ebpf/include/maps.bpf.h
+        rb (RINGBUF), proc_stats (HASH),
+        fd_table, pending_open,
+        event_rate, filter_config,
+        container_map
+    end note
+
+    Probe ..> Maps : "запис подій,\nагрегація лічильників"
+}
+
+' ── Інтерфейси між простором ядра та користувача ───────────────────
+interface "ring_buffer__poll" as IRing
+interface "set_target_cgroup" as ICgFilter
+
+Maps -- IRing
+Probe -- ICgFilter
+
+' ── Простір користувача (Process 1 — Agent) ────────────────────────
+package "Простір користувача — Agent (apps/agent.py)" as AgentPkg {
+
+    component "Event Ingestion Agent" as Bridge <<bridge>>
+    note bottom of Bridge
+        drivers/ebpf/bridge.py
+        ctypes-обгортка над libloader.so
+    end note
+
+    component "Metrics Computation Engine" as Metrics <<core>>
+    note bottom of Metrics
+        core/metrics/engine.py
+        EWMA M(t) ∈ ℝ⁷, n-грами
+    end note
+
+    component "Statistical Anomaly Detector" as StatDet <<core>>
+    note right of StatDet
+        core/detection/statistical.py
+        Z-score, евклідова відстань
+    end note
+
+    component "Signature Matcher" as SigDet <<core>>
+    note right of SigDet
+        core/detection/signature.py
+        regex IOC-патерни
+    end note
+
+    component "Provenance Graph Builder" as Graph <<core>>
+    note right of Graph
+        core/graph/builder.py
+        NetworkX DiGraph + евристики
+    end note
+
+    component "Container Metadata Resolver" as Resolver <<infra>>
+    note right of Resolver
+        internal/container/resolver.py
+        cgroup-inode → Docker meta
+    end note
+
+    component "Scoring & Decision Engine" as Scoring <<core>>
+    note right of Scoring
+        core/scoring/engine.py
+        S = (Σ wᵢ·dᵢ) · P_ctx
+    end note
+}
+
+' Потік подій від ядра до агента
+IRing )-- Bridge
+
+' Зворотний канал: установка цільового cgroup
+Bridge --( ICgFilter
+
+' Внутрішня обробка події в Agent (послідовно у головному циклі)
+Bridge ..> Metrics      : event
+Bridge ..> SigDet       : event
+Bridge ..> Graph        : event
+Bridge ..> Resolver     : cgroup_id
+
+Metrics ..> StatDet     : EWMA-базова лінія,\nn-gram частоти
+
+StatDet  ..> Scoring    : stat_report
+SigDet   ..> Scoring    : sig_match
+Graph    ..> Scoring    : heuristics[]
+Resolver ..> Scoring    : container_info
+
+' ── Зберігання та зовнішній інтерфейс (Process 2 — API Server) ─────
+package "Зберігання та зовнішній інтерфейс" as PresPkg {
+
+    database "Local Storage\n(internal/storage/sqlite.py)" as Storage
+    component "Alert Manager & API Server" as Api <<presentation>>
+    note right of Api
+        apps/server.py (FastAPI)
+        REST + WebSocket + /metrics
+    end note
+
+    component "Web Dashboard" as Dashboard <<presentation>>
+    note right of Dashboard
+        web/index.html
+        Chart.js + WebSocket-клієнт
+    end note
+
+    Scoring ..> Storage   : save_alert(Alert)
+    Api ..> Storage       : get_recent_alerts()
+    Api --> Dashboard     : WebSocket telemetry (2 Гц)
+}
+
+' Зовнішній актор (для контексту)
+actor "Аналітик\nкібербезпеки" as Analyst
+Analyst --> Dashboard : HTTP\nhttp://localhost:8000
+
+@enduml
