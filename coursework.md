@@ -244,11 +244,11 @@ $$S = \left(\sum_{i \in \{\text{sig},\,\text{stat},\,\text{graph},\,\text{ngram}
 Ключовими зацікавленими сторонами є: адміністратор кібербезпеки (в ролі виконавця курсової), який верифікує коректність детектування аномалій, та умовний DevOps-інженер, який розгортає цільовий сервіс у Docker-контейнері.  
 Основні потреби, виведені з обмежень ACL/auditd (підрозділ 1.1) та математичних вимог (підрозділ 2.2):
 
-1. **Безперервний поведінковий моніторинг** цільового контейнера із затримкою детектування не більшою за 1 с.  
-2. **Мінімальний вплив** на продуктивність хостової ОС (менше 5 % CPU) завдяки агрегації подій у просторі ядра (підрозділ 2.3).  
-3. **Ізольоване тестове середовище**: моніторинг здійснюється з окремого привілейованого контейнера, що не модифікує хостову ОС поза межами стандартного Docker API.  
-4. **Простота розгортання**: система збирається в єдиний Docker-образ і запускається однією командою.  
-5. **Адаптивність моделі**: інкрементальне оновлення профілю нормальної поведінки (EWMA, підрозділ 2.2).
+1. **Безперервний поведінковий моніторинг** цільового контейнера із субсекундною медіанною затримкою детектування за усталеного навантаження (фактичні цифри — у §4.5.2).
+2. **Низькі накладні витрати на рівні ядра** завдяки фільтрації подій безпосередньо в eBPF-програмі та lock-free ring buffer (§2.3); сукупна вартість user-space обробки є об'єктом окремого вимірювання у §4.5.2 і визначається переважно однопотоковою реалізацією Python-агента.
+3. **Ізольоване тестове середовище**: моніторинг здійснюється з окремого привілейованого контейнера, що не модифікує хостову ОС поза межами стандартного Docker API.
+4. **Простота розгортання**: система збирається в єдиний Docker-образ і запускається однією командою `docker-compose up`.
+5. **Адаптивність моделі**: інкрементальне оновлення базових ліній метрик за EWMA-схемою (§2.1); алгоритм автоматизованого підбору порогу $T$ за цільовим FPR оформлений як scaffold у `scripts/train.py` (напрям подальшого розвитку).
 
 Для задоволення цих потреб обрано модель опису архітектури «4+1» (Philippe Kruchten), яка доповнює вимоги ISO/IEC/IEEE 42010 п’ятьма взаємопов’язаними поглядами: логічним, процесним, фізичним, розробницьким та сценаріями використання.
 
@@ -260,37 +260,58 @@ $$S = \left(\sum_{i \in \{\text{sig},\,\text{stat},\,\text{graph},\,\text{ngram}
 
 **Компоненти системи (внутрішня структура монолітного контейнера):**
 
-1. **eBPF Probe Subsystem** — набір eBPF-програм, завантажених у ядро хоста через libbpf із підтримкою CO-RE та BTF (підрозділ 1.2). Програми прикріплені до tracepoints openat, close, read, write, socket, pipe2 (підрозділ 2.3). Реалізує in-eBPF фільтрацію за PID, cgroup та масками шляхів, а також агрегацію метрик fd churn rate (m₁…m₃) безпосередньо в ядрі. Завантаження відбувається при старті контейнера через bpf() syscall.  
-2. **Kernel-State Maps** — сховища даних eBPF (BPF\_MAP\_TYPE\_HASH для профілів процесів, BPF\_MAP\_TYPE\_RINGBUF для передачі подій у простір користувача, BPF\_MAP\_TYPE\_LRU\_HASH для кешування шляхів файлів). Maps прикріплені у /sys/fs/bpf/sovnd/ для збереження стану при перезапуску логічного компонента Python.  
-3. **Event Ingestion Agent** — користувацький модуль зчитування подій із ring buffer. Реалізує post-eBPF фільтрацію (дедуплікація, узгодження послідовності).  
-4. **Metrics Computation Engine** — обчислює вектор метрик M(t) \= (m₁(t), m₂(t), …, mₙ(t)), базові параметри μᵢ та σᵢ, та будує n-gram дерева послідовностей системних викликів (підрозділ 2.1).  
-5. **Statistical Anomaly Detector** — обчислення Z-score для скалярних метрик, евклідової відстані / косинусної подібності для розподілу типів FD (m₂, m₅…mₙ).  
-6. **Provenance Graph Builder** — будує спрямований граф взаємодій G \= (V, E), де V — процеси, файли та сокети, E — події у вигляді ⟨subject, object, relation, timestamp⟩ (підрозділ 2.2).  
-7. **Signature Matcher** — швидкий сигнатурний фільтр для відомих IOC (Indicators of Compromise), реалізований як попередня фільтрація перед аномальним модулем (гібридна архітектура, підрозділ 1.4).  
-8. **Scoring & Decision Engine** — обчислює інтегральний показник підозрілості S \= ∑(wᵢ ⋅ dᵢ) ⋅ P₁ₜₓ з урахуванням адаптивного порогу T.  
-9. **Alert Manager & API Server** — генерація сповіщень, експорт метрик у форматі Prometheus та REST API для зовнішніх запитів (FastAPI).  
-10. **Web Dashboard** — статичний HTML-дашборд (`web/index.html`), що отримує телеметрію від FastAPI через WebSocket (2 Гц) та малює графіки і список алертів за допомогою бібліотеки Chart.js. Без важких frameworks (Streamlit/React) — мета: швидкий запуск і нульові додаткові залежності.  
-11. **Container Metadata Resolver** — модуль зіставлення cgroup id (отриманого з eBPF-контексту через bpf\_get\_current\_cgroup\_id()) з Docker Container ID шляхом звернення до Docker Engine API через змонтований /var/run/docker.sock.  
-12. **Local Storage** — SQLite (для демонстраційного стенду) або файлова БД для зберігання профілів μᵢ та σᵢ, журналів подій та серіалізованих графів.
+1. **eBPF Probe Subsystem** (`drivers/ebpf/src/*.bpf.c`) — набір eBPF-програм, завантажених у ядро хоста через `libbpf` із підтримкою CO-RE та BTF (§1.2). Програми прикріплені до tracepoints `openat`, `close`, `read`, `write`, `socket`, `pipe2` (§2.3). Реалізує in-eBPF фільтрацію за cgroup, масками шляхів та обмеженням частоти подій, а також агрегацію per-PID лічильників (FD churn, кількість байтів, лічильник відкритих FD) безпосередньо в ядрі через `__sync_fetch_and_add`. Завантаження відбувається при старті агента через `bpf()` syscall у бібліотеці-обгортці `libloader.so`.
+2. **Kernel-State Maps** — типізовані сховища даних eBPF: `BPF_MAP_TYPE_RINGBUF` (передача подій у user space, 256 КБ), `BPF_MAP_TYPE_HASH` для per-PID `proc_stats` та `fd_table`, для конфігурації фільтра `filter_config` та для метаданих контейнерів `container_map`. Усі мапи пінуються у `/sys/fs/bpf/sovnd/` для збереження стану при перезапуску Python-агента.
+3. **Event Ingestion Agent** (`drivers/ebpf/bridge.py`) — користувацький Python-модуль, що зчитує події з ring buffer у фоновому потоці через `ring_buffer__poll()`, конвертує їх ctypes-структури `Event` у dict та передає основному циклу. Експонує також метод `set_target_cgroup(inode)`, що звужує in-kernel фільтр до одного контейнера.
+4. **Metrics Computation Engine** (`core/metrics/engine.py`) — обчислює per-PID вектор $M(t) \in \mathbb{R}^7$ та базові параметри $\mu_i, \sigma_i$ за EWMA-схемою, а також підтримує частотний словник n-грам послідовностей операцій (§2.1).
+5. **Statistical Anomaly Detector** (`core/detection/statistical.py`) — обчислює Z-score для скалярних компонентів $M(t)$ та евклідову відстань як cold-start індикатор (§2.2); повертає у `stat_report` також `ngram_anomaly` (інверсну частоту останнього вікна викликів).
+6. **Provenance Graph Builder** (`core/graph/builder.py`, NetworkX) — будує спрямований граф взаємодій $G = (V, E)$, де $V$ — процеси та файлові ресурси, $E$ — події доступу у вигляді четвірки $\langle \text{subject}, \text{object}, \text{relation}, \text{timestamp} \rangle$ (§2.2). Експонує API ego-підграфа за PID та чотири евристики (`sensitive_access`, `mass_file_ops`, `high_connectivity`, `pipe_usage`).
+7. **Signature Matcher** (`core/detection/signature.py`) — регулярно-вираженевий швидкий фільтр відомих IOC (`/etc/shadow`, `/etc/sudoers`, `/var/run/docker.sock`, `/root/.ssh/*`, `/proc/kcore`), а також низько-довірлива HEURISTIC_MATCH-евристика для викликів утиліт даних exfil (`nc`, `wget`, `curl`).
+8. **Scoring & Decision Engine** (`core/scoring/engine.py`) — обчислює інтегральний показник підозрілості $S = \left(\sum_i w_i \cdot d_i\right) \cdot P_{\text{ctx}}$ за чотирма компонентами (signature, statistical, graph, n-gram) з контекстним коефіцієнтом за `comm` процесу та порівнює з порогами $T$ і $T_c$.
+9. **Alert Manager & API Server** (`apps/server.py`, FastAPI) — REST endpoints (`/api/status`, `/api/alerts`, `/api/attack` для симульованих атак), WebSocket `/ws/telemetry` для дашборду, Prometheus-сумісний `/metrics` (формат `text/plain`).
+10. **Web Dashboard** (`web/index.html`) — статичний HTML-дашборд, що отримує телеметрію від FastAPI через WebSocket (2 Гц) і малює графіки EPS та список алертів засобами Chart.js. Без важких frameworks (Streamlit / React) — мета: швидкий запуск і нульові додаткові залежності.
+11. **Container Metadata Resolver** (`internal/container/resolver.py`) — зіставляє `cgroup_id`, отриманий з eBPF-контексту через `bpf_get_current_cgroup_id()`, з метаданими Docker-контейнера. Реальне зіставлення відбувається через `stat()` на шлях у `/sys/fs/cgroup<...>` (інод цього шляху ідентичний значенню, що повертає `bpf_get_current_cgroup_id()`); список цільових контейнерів отримується з Docker Engine API через змонтований `/var/run/docker.sock`. Інтегрований із eBPF-фільтром через `EBPFAgent.set_target_cgroup(inode)` (§деталі вище, компонент 3).
+12. **Local Storage** (`internal/storage/sqlite.py`) — SQLite для алертів (`alerts`) та профілів (`profiles`); єдиний файл `data/sovnd.db` для простоти демо-стенду й аудиту.
 
-Інтерфейси між компонентами реалізовані як внутрішньопроцесні виклики (shared memory, черги) у межах одного Python-процесу або пулу потоків, що мінімізує накладні витрати на міжпроцесову комунікацію.
+Інтерфейси між компонентами реалізовані як прямі Python-виклики у межах одного процесу: основний цикл `apps/agent.py` послідовно викликає компоненти 4 → 5 → 7 → 6 → 11 → 8 для кожної події з ring buffer; HTTP-сервер (9) запускається окремим процесом і читає алерти зі спільної SQLite. Це мінімізує накладні витрати на міжпроцесову комунікацію в межах прототипу.
 
 ## **3.3. Процесний погляд (Process View)** {#3.3.-процесний-погляд-(process-view)}
 
-Процесний погляд описує конкурентність і потоки виконання всередині монолітного контейнера СОВНД.  
-	![][image22]  
-Рисунок 3.2 — Діаграма послідовності процесу перехоплення та аналізу системних подій  
-**Потоки виконання:**
+Процесний погляд описує конкурентність і потоки виконання у стенді СОВНД. У реалізації прототипу свідомо обрано мінімальну модель конкурентності, що спрощує верифікацію алгоритмів; масштабована багатопотокова схема залишена як напрям подальшого розвитку (підрозділ 3.3.2).
 
-1. **eBPF Scheduler (kernel space)** — асинхронно викликається ядром хоста при спрацьовуванні tracepoints на процесах цільового контейнера. Виконує фільтрацію та агрегацію, записує в BPF\_MAP\_TYPE\_RINGBUF.  
-2. **Ring Buffer Reader (потік T1)** — блокується на bpf\_ringbuf\_reserve() / poll(), зчитує події з ring buffer у батчах.  
-3. **Event Processor (пул потоків T2 … Tk)** — паралельна обробка пакетів подій: дедуплікація, доповнення метаданими контейнера (Container Metadata Resolver), оновлення n-gram дерев. Використовується fine-grained locking за хешем від PID.  
-4. **Metrics Aggregator (потік T3)** — періодично (інтервал Δt) обчислює M(t), оновлює EWMA.  
-5. **Detection Worker (потік T4)** — запускає Statistical Anomaly Detector та Provenance Graph Builder для процесів із оновленими метриками.  
-6. **Alert Dispatcher (потік T5)** — асинхронна відправка сповіщень і оновлення Web Dashboard через WebSocket або Server-Sent Events.  
-7. **API Server (потік T6)** — HTTP-сервер FastAPI для зовнішніх запитів та Prometheus /metrics.
+![][image22]  
+Рисунок 3.2 — Діаграма послідовності процесу перехоплення та аналізу системних подій
 
-**Синхронізація:** між T1 і T2 — lock-free механізм ring buffer (реалізований ядром). Між T2 і T3/T4 — внутрішня черга подій Python (queue.Queue) з блокуванням на рівні записів для окремих PID.
+### 3.3.1. Реалізована модель конкурентності
+
+Стенд складається з **двох процесів ОС**, що працюють незалежно та поділяють лише файлову SQLite-БД і heartbeat-файл:
+
+* **Процес 1 — Agent** (`apps/agent.py`, запускається з `CAP_BPF`). У цьому процесі живуть **два Python-потоки**:
+  * **T_poll — Ring Buffer Poller** (фоновий daemon-потік, створюється у `EBPFAgent.start()`): блокується на `ring_buffer__poll()` у бібліотеці `libloader.so` (через ctypes), розпаковує `Event` ctypes-структури і кладе їх у `queue.Queue` (`self._event_queue`). Цей потік не виконує жодної аналітики — лише доставка.
+  * **T_main — Main Detection Loop** (головний потік): у нескінченному циклі викликає `EBPFAgent.get_event(timeout)`, послідовно проганяє подію через `MetricsEngine.update` → `StatisticalDetector.evaluate` → `SignatureDetector.analyze` → `ProvenanceGraphBuilder.heuristics` → `ContainerResolver.resolve` → `ScoringEngine.compute`. При формуванні алерта — записує його у SQLite через `StorageManager.save_alert`. Раз на секунду оновлює heartbeat-файл `data/heartbeat.json` (для дашборду).
+* **Процес 2 — API Server** (`apps/server.py`, запускається через `uvicorn`, без жодних eBPF-привілеїв): обслуговує REST endpoints, віддає статичний дашборд та підтримує WebSocket-з'єднання `/ws/telemetry`, на яке кожні 500 мс публікує snapshot із SQLite + поточну EPS-метрику з heartbeat-файлу.
+
+**Синхронізація:**
+* Між eBPF (kernel space) та T_poll — lock-free семантика `BPF_MAP_TYPE_RINGBUF`.
+* Між T_poll та T_main — стандартна потокобезпечна `queue.Queue` (внутрішнє блокування `threading.Lock`).
+* Між процесом 1 і процесом 2 — асинхронний обмін через SQLite (`StorageManager._lock` гарантує серіалізацію запису) та heartbeat-файл (write-then-rename семантика з боку агента).
+
+Така мінімальна декомпозиція означає, що **T_main є єдиним послідовним обробником подій** і, відповідно, основним обмежувачем пропускної здатності системи: за усталеного навантаження понад $\sim$ 2000 EPS чергу `_event_queue` агент не встигає вичерпувати, що проявляється як зростання затримки детектування (детальні вимірювання у §4.5.2).
+
+### 3.3.2. Напрямки подальшого розвитку: масштабована процесна модель
+
+Природним вектором покращення є введення пулу обробників та явного розділення фаз ingestion / metrics / detection / dispatch. Запропонована схема:
+
+| Потік | Призначення | Синхронізація з сусідами |
+| :---- | :---- | :---- |
+| **T1** Ring Buffer Reader | блокується на `ring_buffer__poll()`, батчить події | lock-free → ring buffer |
+| **T2..Tk** Event Processor (worker pool) | дедуплікація, збагачення метаданими контейнера, оновлення per-PID n-gram counter | fine-grained locking за хешем від `pid` |
+| **T_aggr** Metrics Aggregator | періодичне обчислення $M(t)$, оновлення EWMA | shared-memory snapshot |
+| **T_det** Detection Worker | Statistical + Graph + Signature + Scoring | внутрішня черга «PID із оновленими метриками» |
+| **T_disp** Alert Dispatcher | асинхронний публіш у WebSocket-фанаут | WebSocket broadcast |
+| **T_api** API Server | FastAPI REST + Prometheus `/metrics` | окремий процес, читає SQLite |
+
+Перехід до такої схеми зніме виявлене у §4.5.2 однопотокове вузьке місце, але одночасно ускладнить верифікацію коректності (буде потрібен повторюваний тестовий пакет на race conditions). Радикальніша опція — переписати агент мовою з нативною паралельністю (Go, Rust): це усуне Python-GIL і дозволить тримати агент в межах <5 % CPU навіть за усталеного потоку $\sim$10 000 EPS.
 
 ## **3.4. Фізичний погляд (Physical / Deployment View)** {#3.4.-фізичний-погляд-(physical-/-deployment-view)}
 
@@ -323,41 +344,42 @@ $$S = \left(\sum_{i \in \{\text{sig},\,\text{stat},\,\text{graph},\,\text{ngram}
 
 ## **3.5. Розробницький погляд (Development View)** {#3.5.-розробницький-погляд-(development-view)}
 
-Розробницький погляд описує організацію програмних модулів у межах монолітного контейнера.
+Розробницький погляд описує організацію програмних модулів у межах монолітного контейнера. Фізична структура репозиторію слідує принципу пошарової декомпозиції: kernel-side eBPF код у `drivers/`, бізнес-логіка детектування у `core/`, інфраструктурні модулі (resolver, storage) у `internal/`, точки входу у `apps/`, статичні web-ресурси у `web/`.
 
 **Шари програмного забезпечення:**
 
-1. **Kernel Space Layer** (мова C, eBPF):  
-   1. tracer.bpf.c — eBPF-програми для tracepoints.  
-   2. maps.bpf.h — визначення BPF maps (ringbuf, hash, LRU).  
-   3. filter.bpf.c — логіка in-eBPF фільтрації за cgroup, PID, шляхами.  
-   4. fd\_tracker.bpf.c — трасування операцій із файловими дескрипторами, реконструкція шляхів через dentry (підрозділ 1.3).  
-2. **eBPF Loader & Ringbuf Interface** (C/C++ \+ ctypes/cffi для Python):  
-   1. loader.c — завантаження eBPF-програм, CO-RE relocations, pinning maps у /sys/fs/bpf/sovnd/.  
-   2. Компілюється в shared object (.so), який викликається з Python через ctypes або cffi.  
-3. **Business Logic Layer** (Python):  
-   1. metrics/engine.py — Metrics Computation Engine, EWMA, Z-score.  
-   2. detector/statistical.py — Statistical Anomaly Detector.  
-   3. detector/signature.py — Signature Matcher.  
-   4. graph/builder.py — Provenance Graph Builder (NetworkX).  
-   5. scoring/engine.py — обчислення ST.  
-   6. docker/resolver.py — Container Metadata Resolver (Docker SDK).  
-4. **Persistence Layer** (Python):  
-   1. storage/sqlite.py — робота з SQLite (профілі, журнали).  
-   2. storage/serializer.py — серіалізація графа G (pickle / graphml).  
-5. **Presentation Layer** (Python):  
-   1. apps/server.py — FastAPI додаток (REST endpoints, WebSocket телеметрії, Prometheus `/metrics`, статичний дашборд із `web/index.html`).  
-   2. web/index.html — клієнтська частина дашборду (Chart.js + WebSocket-клієнт). Жодного backend-рендера; SSR/Streamlit/Jinja2 не використовуються.
+1. **Kernel Space Layer** (мова C, eBPF) — `drivers/ebpf/`:
+   * `src/tracer.bpf.c` — eBPF-програми для tracepoints (`openat`, `close`, `read`, `write`, `socket`, `pipe2`; для `openat`/`socket`/`pipe2` — пара enter+exit).
+   * `src/filter.bpf.c` — логіка in-eBPF фільтрації за cgroup, шляхами та обмеженням частоти подій.
+   * `src/fd_tracker.bpf.c` — допоміжний модуль трасування життєвого циклу FD (відкриття/закриття за PID).
+   * `include/maps.bpf.h` — визначення BPF-структур `event`, `proc_stats`, `pending_open`, `fd_info` та мап (`ringbuf`, `hash`).
+   * `include/vmlinux.h` — згенерована BTF-розгортка типів ядра для CO-RE.
+2. **eBPF Loader & Bridge** — `drivers/ebpf/`:
+   * `loader/loader.c` — завантаження eBPF-програм, CO-RE relocations, пінінг мап у `/sys/fs/bpf/sovnd/`, експорт C-API (`start_loader`, `poll_events`, `stop_loader`, `set_target_cgroup`). Компілюється у shared object `libloader.so`.
+   * `bridge.py` — Python-обгортка над `libloader.so` через `ctypes`, перетворює `Event` ctypes-структури у словники, обслуговує фоновий поток `ring_buffer__poll()`.
+3. **Detection Logic Layer** — `core/`:
+   * `core/config.py` — централізована конфігурація (ваги, пороги, `CONTEXT_COEFFICIENTS`, `CRITICAL_PATH_PATTERNS`).
+   * `core/metrics/engine.py` — `MetricsEngine`: EWMA-вектор $M(t)$, Z-score, частотний словник n-грам.
+   * `core/detection/signature.py` — `SignatureDetector`: швидкий regex-фільтр IOC.
+   * `core/detection/statistical.py` — `StatisticalDetector`: Z-score проти EWMA-базової лінії + інтеграція n-gram у `stat_report`.
+   * `core/graph/builder.py` — `ProvenanceGraphBuilder`: NetworkX-граф + чотири евристики (`sensitive_access`, `mass_file_ops`, `high_connectivity`, `pipe_usage`).
+   * `core/scoring/engine.py` — `ScoringEngine`: формула $S$ з $P_{\text{ctx}}$, повертає dataclass `Alert` із полем `breakdown`.
+4. **Infrastructure Layer** — `internal/`:
+   * `internal/container/resolver.py` — `ContainerResolver`: cgroup-inode → Docker метадані (`stat()` шляху під `/sys/fs/cgroup` + Docker SDK).
+   * `internal/storage/sqlite.py` — `StorageManager`: збереження алертів та профілів у SQLite, потокобезпечне через `threading.Lock`.
+5. **Entry Points & Presentation** — `apps/` та `web/`:
+   * `apps/agent.py` — головний детекційний цикл (Process 1 у §3.3.1).
+   * `apps/server.py` — FastAPI: REST, WebSocket-телеметрія, Prometheus `/metrics`, статичний дашборд (Process 2).
+   * `apps/demo.py` — оркестратор для одно-командного запуску стенду (зачищає БД, стартує агента й сервер, відкриває браузер).
+   * `apps/dashboard.py` — допоміжний Streamlit-перегляд для відладочного аналізу історичних алертів (не входить до основного UI).
+   * `web/index.html` — клієнтська частина дашборду (Chart.js + WebSocket-клієнт).
 
-**Структура репозиторію:**
-
-| /ebpf          — eBPF вихідний код (C), Makefile /src           — Python-пакети (metrics, detector, graph, api, dashboard) /tests         — тести pytest /deploy        — Dockerfile, docker-compose.yml /data          — SQLite (volume mount) |
-| :---- |
+**Допоміжні директорії:** `scripts/` (`validate_performance.py` — вимірювання продуктивності; `train.py` — scaffold навчання/валідації порогу; `attack.sh` — генерація демо-навантаження), `tests/` (pytest, поділ на `tests/unit/` та `tests/integration/`, 281 тест), `deploy/` (Dockerfile + docker-compose.yml).
 
 **Dockerfile (multi-stage):**
 
-1. Stage 1 (builder): clang, llvm, libbpf-dev — компіляція eBPF .o та C-loader .so.  
-2. Stage 2 (runtime): python:3.11-slim, копіювання .o, .so, Python-залежностей.
+1. Stage 1 (builder): `clang`, `llvm`, `libbpf-dev` — компіляція eBPF `.o`, скелетного заголовка `tracer.skel.h` та C-loader `libloader.so`.
+2. Stage 2 (runtime): `python:3.11-slim`, копіювання `libloader.so`, скомпільованого eBPF-байт-коду та Python-залежностей із `requirements.txt`.
 
 ## **3.6. Сценарії використання (Use Case View)** {#3.6.-сценарії-використання-(use-case-view)}
 
@@ -366,35 +388,31 @@ $$S = \left(\sum_{i \in \{\text{sig},\,\text{stat},\,\text{graph},\,\text{ngram}
 ![][image24]  
 Рисунок 3.4 — Діаграма прецедентів системи оперативного виявлення несанкціонованого доступу
 
-**Сценарій UC-1: Навчання профілю нормальної поведінки цільового контейнера**
+**Сценарій UC-1: Запуск стенду та накопичення базових ліній поведінки**
 
-1. Аналітик запускає стенд: docker-compose up (піднімає sovnd-monitor та web-app).  
-2. Контейнер sovnd-monitor завантажує eBPF-програми в ядро хоста.  
-3. Event Ingestion Agent зчитує події відкриття сокетів, лог-файлів, конфігурацій цільового контейнера web-app.  
-4. Metrics Computation Engine накопичує вектори M(t), параметри μᵢ та σᵢ, та будує n-gram дерева.  
-5. Профіль зберігається в SQLite-файлі у volume sovnd-data.
+1. Аналітик запускає стенд однією командою: `docker-compose up` (піднімає `sovnd-monitor` та цільовий `web-app`); альтернатива для локального запуску — `sudo python3 apps/demo.py start`.
+2. Контейнер `sovnd-monitor` завантажує eBPF-програми у ядро хоста через `libloader.so`, пінує мапи в `/sys/fs/bpf/sovnd/`, опціонально звужує in-kernel фільтр до `cgroup_id` контейнера з міткою `TARGET_LABEL` (§3.2, компонент 11).
+3. `EBPFAgent` зчитує події з ring buffer; `MetricsEngine` інкрементально оновлює $\mu_i, \sigma_i$ та частотні словники n-грам — базові лінії формуються «на льоту» в межах процесу агента (персистентного сховища профілів у поточній реалізації немає; це планується як частина scaffold `scripts/train.py`).
 
 **Сценарій UC-2: Виявлення аномалії в реальному часі**
 
-1. У контейнері web-app відбувається симульована атака: процес відкриває /etc/shadow хоста.  
-2. eBPF-програма в ядрі фіксує подію openat, in-eBPF фільтр пропускає її (критичний шлях).  
-3. Подія через ring buffer потрапляє в Python-застосунок; Metrics Computation Engine фіксує відхилення m₂, m₄.  
-4. Statistical Anomaly Detector обчислює |zᵢ| \> 3 та формує четвірку ⟨web-app, /etc/shadow, open, t⟩.  
-5. Signature Matcher ідентифікує доступ до /etc/shadow як відомий IOC.  
-6. Scoring & Decision Engine обчислює S ≥ T.  
-7. Alert Dispatcher оновлює Web Dashboard; аналітик бачить алерт у браузері за адресою http://localhost:8000.
+1. У контейнері `web-app` (або на хості — за відсутності `TARGET_LABEL`) відбувається підозріла операція, наприклад `cat /etc/shadow`.
+2. eBPF-програма в ядрі фіксує подію `openat` (enter+exit), in-eBPF-фільтр пропускає її (шлях не співпадає з noise-префіксами).
+3. Подія через ring buffer потрапляє в Python-агент. У головному циклі `apps/agent.py` послідовно викликаються `MetricsEngine.update`, `StatisticalDetector.evaluate`, `SignatureDetector.analyze`, `ProvenanceGraphBuilder.heuristics`, `ContainerResolver.resolve`, `ScoringEngine.compute`.
+4. `SignatureDetector` визначає шлях як критичний IOC (`d_{\text{sig}} = 15$); `ProvenanceGraphBuilder` додає евристику `sensitive_access` ($d_{\text{graph}} = 5$); для процесу `cat` $P_{\text{ctx}} = 0.8$. Сумарний $S = (15 + 5) \cdot 0.8 = 16.0 \geq T = 12.0$ — формується `Alert` із детальним `breakdown`.
+5. `Alert` зберігається у SQLite (`StorageManager.save_alert`) та виводиться у stdout агента з тегом контейнера (`container=<name>`, якщо resolver знайшов зіставлення).
+6. `apps/server.py` через WebSocket `/ws/telemetry` доставляє оновлений список алертів у `web/index.html`; аналітик бачить його у браузері за адресою `http://localhost:8000`.
 
-**Сценарій UC-3: Адаптація профілю після легітимного оновлення**
+**Сценарій UC-3: Адаптація профілю до легітимних змін поведінки**
 
-1. Розробник оновлює образ web-app; нова версія відкриває додатковий кеш-файл.  
-2. Metrics Computation Engine фіксує відхилення, але воно не перевищує T (нижча вага для /tmp/cache\*).  
-3. EWMA поступово оновлює μᵢ та σᵢ, інтегруючи нову поведінку в профіль.
+1. Розробник оновлює образ `web-app`; нова версія відкриває додатковий кеш-файл (`/tmp/cache/*`).
+2. `MetricsEngine` фіксує сплеск FD churn; перші виклики дають високе $d_{\text{stat}}$, але префікс `/tmp` не активує жодну з графових евристик, отже $d_{\text{graph}} = 0$ і сумарний $S$ за можливе сторгове значення 12.0 не виходить.
+3. EWMA-схема ($\alpha = 0.3$) поступово підтягує $\mu_i, \sigma_i$ нової «норми»; за декілька десятків вікон Z-score нової поведінки повертається в межі $\lvert z \rvert \leq 3$, і відхилення припиняє генерувати false positives. Жодне ручне втручання не потрібне.
 
-**Сценарій UC-4: Перевірка графа провенансу**
+**Сценарій UC-4: Аналіз контексту алерта через `breakdown` та граф провенансу**
 
-1. Аналітик відкриває Web Dashboard.  
-2. Переглядає візуалізацію графа G (вершини — процеси web-app, файли, сокети; ребра — події доступу).  
-3. Ідентифікує підозрілий ланцюжок взаємодій, що призвів до спрацьовування алерту.
+1. Аналітик відкриває дашборд; для кожного алерта виводиться компонентний `breakdown` ($d_{\text{sig}}, d_{\text{stat}}, d_{\text{graph}}, d_{\text{ngram}}, P_{\text{ctx}}$) — це дозволяє одразу зрозуміти, які саме сигнали з'єдналися у спрацювання.
+2. Для глибинного forensic-аналізу провенансного графа використовується метод `ProvenanceGraphBuilder.serialized()` (формат NetworkX node-link JSON), що повертає весь $G = (V, E)$; його можна вивантажити та візуалізувати у зовнішньому інструменті (наприклад, Cytoscape). Інтерактивна візуалізація графа безпосередньо у web-дашборді — у переліку напрямків подальшого розвитку.
 
 ## **3.7. Відповідність архітектурних поглядів потребам зацікавлених сторін** {#3.7.-відповідність-архітектурних-поглядів-потребам-зацікавлених-сторін}
 
