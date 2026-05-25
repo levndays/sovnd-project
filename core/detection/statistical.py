@@ -52,7 +52,7 @@ class StatisticalDetector:
         -------
         dict with keys:
             pid, is_anomalous, max_z_score, z_vector,
-            euclidean_distance, severity
+            euclidean_distance, severity, ngram_anomaly
         """
         z_scores = self._engine.get_z_scores(pid, current_vector)
         if not z_scores:
@@ -65,6 +65,10 @@ class StatisticalDetector:
         mu = p.mu if p else current_vector
         distance = sum((c - m) ** 2 for c, m in zip(current_vector, mu)) ** 0.5
 
+        # n-gram anomaly (0..1): high when the latest syscall window
+        # is rare against the per-PID baseline. See §2.1 (n-gram-tree).
+        ngram_anomaly = float(self._engine.get_ngram_anomaly_score(pid))
+
         return {
             "pid":                pid,
             "is_anomalous":       anomalous,
@@ -72,6 +76,7 @@ class StatisticalDetector:
             "z_vector":           z_scores,
             "euclidean_distance": float(distance),
             "severity":           self._severity(max_z),
+            "ngram_anomaly":      ngram_anomaly,
         }
 
     # ── helpers ──────────────────────────────────────────────
@@ -79,12 +84,13 @@ class StatisticalDetector:
     @staticmethod
     def _no_data(pid: int) -> Dict[str, Any]:
         return {
-            "pid": pid,
-            "is_anomalous": False,
-            "max_z_score": 0.0,
-            "z_vector": [],
+            "pid":                pid,
+            "is_anomalous":       False,
+            "max_z_score":        0.0,
+            "z_vector":           [],
             "euclidean_distance": 0.0,
-            "severity": "info",
+            "severity":           "info",
+            "ngram_anomaly":      0.0,
         }
 
     def _severity(self, z_score: float) -> str:

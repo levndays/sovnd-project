@@ -1,8 +1,13 @@
 """Hybrid-signature scoring engine (§2.2 Explainable Scoring).
 
 Computes ``S = Σ(wᵢ · dᵢ) · P_ctx`` aggregating signature,
-statistical, and graph-provenance signals into a single
+statistical, graph-provenance, and n-gram signals into a single
 interpretable threat score with detailed breakdown.
+
+P_ctx is a per-process context coefficient (see
+``core.config.CONTEXT_COEFFICIENTS``) that dampens known-quiet
+system tools and amplifies high-risk shell/script interpreters
+launched in unusual contexts.
 """
 
 from __future__ import annotations
@@ -11,7 +16,12 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from core.config import get_settings, Settings
+from core.config import (
+    CONTEXT_COEFFICIENTS,
+    DEFAULT_CONTEXT_COEFFICIENT,
+    Settings,
+    get_settings,
+)
 
 
 @dataclass
@@ -37,6 +47,7 @@ class ScoringEngine:
             "signature":   cfg.weights.signature,
             "statistical": cfg.weights.statistical,
             "graph":       cfg.weights.graph,
+            "ngram":       cfg.weights.ngram,
         }
 
     def compute(
@@ -52,7 +63,8 @@ class ScoringEngine:
         Returns an ``Alert`` if the composite score exceeds the
         configured threshold, otherwise ``None``.
         """
-        comp   = {"signature": 0.0, "statistical": 0.0, "graph": 0.0}
+        comp   = {"signature": 0.0, "statistical": 0.0,
+                  "graph": 0.0, "ngram": 0.0}
         reasons: List[str] = []
 
         # ── signature ──────────────────────────────────────
@@ -85,21 +97,43 @@ class ScoringEngine:
             comp["graph"] += w
             reasons.append(f"Graph Heuristic: {heuristic}")
 
-        total = round(sum(comp.values()), 2)
+        # ── n-gram (rare syscall sequence) ─────────────────
+        ngram_anomaly = float(stat_report.get("ngram_anomaly", 0.0))
+        # Only contribute when the sequence is meaningfully rare;
+        # the inverse-frequency metric saturates near 1.0 for cold
+        # starts, so an absolute floor avoids cold-start noise.
+        if ngram_anomaly >= 0.7:
+            comp["ngram"] = self.weights["ngram"] * ngram_anomaly
+            reasons.append(f"Rare syscall n-gram (p={1 - ngram_anomaly:.2f})")
+
+        # ── context multiplier (P_ctx) ─────────────────────
+        comm = str(event.get("comm", "")) or "unknown"
+        p_ctx = self._context_coefficient(comm)
+        total = round(sum(comp.values()) * p_ctx, 2)
 
         if total < self.threshold:
             return None
 
         severity = "critical" if total >= self.critical else "warning"
 
+        # Expose P_ctx so the dashboard / alert log can show why a
+        # score landed where it did.
+        breakdown_out = dict(comp)
+        breakdown_out["p_ctx"] = p_ctx
+
         return Alert(
             timestamp=datetime.now(timezone.utc).isoformat(),
             pid=event["pid"],
-            comm=str(event.get("comm", "unknown")),
+            comm=comm,
             score=total,
             severity=severity,
             reasons=reasons,
-            breakdown=comp,
+            breakdown=breakdown_out,
             container_info=container_info,
         )
+
+    @staticmethod
+    def _context_coefficient(comm: str) -> float:
+        """Return P_ctx for *comm* (defaults to 1.0 if unmapped)."""
+        return CONTEXT_COEFFICIENTS.get(comm, DEFAULT_CONTEXT_COEFFICIENT)
 

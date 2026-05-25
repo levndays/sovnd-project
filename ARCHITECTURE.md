@@ -269,38 +269,67 @@ sensitive_access: filename.startswith("/etc") or filename.startswith("/root")
 
 **Purpose:** Combine all detection vectors into an explainable threat score.
 
-**Scoring Formula:**
+**Scoring Formula (per §2.2):**
 ```
-S = w_signature × sig_match + w_statistical × max_z + w_graph × |heuristics|
+S = (w_signature·d_sig + w_statistical·d_stat + w_graph·d_graph + w_ngram·d_ngram) · P_ctx
 
 where:
-  w_signature = 15.0   (high - signature match is definitive)
-  w_statistical = 1.0   (low - z-score is scaled)
-  w_graph = 5.0         (medium - heuristics are suspicious)
+  w_signature   = 15.0   (high — signature match is definitive)
+  w_statistical = 1.0    (low — z-score is already scaled)
+  w_graph       = 5.0    (medium — heuristics are suspicious)
+  w_ngram       = 3.0    (medium — rare syscall n-gram)
+  P_ctx         = per-comm context coefficient (default 1.0)
 ```
 
-**Score Breakdown:**
+**Components:**
+
+| Component | Source | When it fires |
+|---|---|---|
+| `signature` | `SignatureDetector` | IOC match (15.0) or suspicious-comm heuristic (5.0) |
+| `statistical` | `StatisticalDetector` Z-score on the m₁–m₇ EWMA profile | `max_z > z_threshold` (default 3.0) |
+| `graph` | `ProvenanceGraphBuilder` heuristics | one of `sensitive_access`, `mass_file_ops`, `high_connectivity`, `pipe_usage` |
+| `ngram` | `MetricsEngine.get_ngram_anomaly_score(pid)` | the latest syscall trigram is rare against the per-PID baseline (`anomaly ≥ 0.7` — anything lower is cold-start noise) |
+
+**P_ctx (per-process context coefficient):**
+
+Final score is multiplied by `P_ctx`, looked up by `comm` in
+`core.config.CONTEXT_COEFFICIENTS`. The intent (paper §2.2) is
+*"lower for system utilities, higher for unknown scripts"* — so:
+
+```python
+"systemd": 0.5, "dbus-daemon": 0.5, "sudo": 0.7,
+"cat": 0.8, "ls": 0.8, "find": 0.8,
+"bash": 1.3, "sh": 1.3, "perl": 1.3, "python": 1.2,
+# everything else → 1.0
+```
+
+A borderline `cat /etc/shadow` alert (raw 15.0) is dampened to 12.0,
+which (with the default 12.0 threshold) is just barely an alert; a
+borderline `bash /etc/shadow` access is amplified to 19.5, well
+above threshold.
+
+**Score Breakdown (exposed on every Alert):**
 ```python
 breakdown = {
-    "signature": 0.0 or 15.0,
-    "statistical": max_z * 1.0,  # e.g., 5.2 if z=5.2
-    "graph": len(heuristics) * 5.0  # e.g., 10.0 if 2 heuristics
+    "signature":   0.0 or 15.0,
+    "statistical": max_z * 1.0,
+    "graph":       sum_of_heuristic_weights,
+    "ngram":       0.0 or w_ngram * ngram_anomaly,
+    "p_ctx":       1.0,   # or 0.5 / 0.8 / 1.3 / …
 }
 ```
 
 **Alert Generation:**
 ```python
-if total_score >= threshold:
-    severity = "CRITICAL" if total_score > 20 else "WARNING"
-    return Alert(
-        score=total_score,
-        severity=severity,
-        breakdown=comp,
-        reasons=[...]  # Human-readable
-    )
+total = round(sum(components) * p_ctx, 2)
+if total < threshold:
+    return None
+severity = "critical" if total >= score_critical else "warning"
 ```
 
-**Threshold Decision:** Set to 15.0 to reduce false positives from graph-only alerts (sensitive_access alone is 5.0, below threshold).
+**Threshold Decision:** Default 12.0 (`THREAT_LEVEL=medium`); `critical`
+crossover at 22.0. Both tunable via `Settings` or the `THREAT_LEVEL` env
+var (low=20, medium=12, high=6).
 
 ---
 

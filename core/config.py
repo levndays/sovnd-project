@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import List, Pattern
+from typing import Dict, List, Pattern
 
 
 # ── file-system defaults ────────────────────────────────────────
@@ -30,6 +30,7 @@ class ScoringWeights:
     signature:   float = 15.0
     statistical: float = 1.0
     graph:       float = 5.0
+    ngram:       float = 3.0     # weight on n-gram anomaly score (0..1)
 
 @dataclass(frozen=True)
 class Settings:
@@ -76,6 +77,41 @@ CRITICAL_PATH_PATTERNS: List[Pattern] = [
 SUSPICIOUS_COMMANDS: List[str] = [
     "nc", "ncat", "wget", "curl",
 ]
+
+
+# ── P_ctx context coefficients (per §2.2) ────────────────────────
+#
+# Final score is multiplied by a per-comm coefficient: < 1 dampens
+# noisy system tools, > 1 amplifies high-risk script interpreters.
+# Unmapped processes get DEFAULT_CONTEXT_COEFFICIENT (1.0).
+#
+# The intent (per the paper): "lower for system utilities, higher
+# for unknown scripts." Keep this table small and conservative —
+# every coefficient is a tunable false-positive lever.
+
+DEFAULT_CONTEXT_COEFFICIENT: float = 1.0
+
+CONTEXT_COEFFICIENTS: Dict[str, float] = {
+    # quiet, mostly-trusted system housekeeping
+    "systemd":         0.5,
+    "systemd-logind":  0.5,
+    "systemd-journal": 0.5,
+    "dbus-daemon":     0.5,
+    "polkitd":         0.5,
+    "cron":            0.6,
+    "sudo":            0.7,
+    # routine read-only utilities
+    "cat":             0.8,
+    "ls":              0.8,
+    "find":            0.8,
+    "grep":            0.8,
+    # high-risk: script interpreters / shells launched in unusual contexts
+    "sh":              1.3,
+    "bash":            1.3,
+    "perl":            1.3,
+    "python":          1.2,
+    "python3":         1.2,
+}
 
 
 # ── singleton ────────────────────────────────────────────────────
