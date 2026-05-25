@@ -84,9 +84,10 @@ class TestTracepointHooks:
         assert "bpf_ringbuf_submit" in tracer_content, "bpf_ringbuf_submit not used"
 
     def test_proc_metrics_lookup(self, tracer_content):
-        """Verify proc_metrics map lookup is used."""
+        """Verify the per-process stats map (renamed from proc_metrics
+        to proc_stats during refactor) is referenced from the tracer."""
         assert "bpf_map_lookup_elem" in tracer_content, "bpf_map_lookup_elem not used"
-        assert "proc_metrics" in tracer_content, "proc_metrics map not referenced"
+        assert "proc_stats" in tracer_content, "proc_stats map not referenced"
 
     def test_proc_metrics_update(self, tracer_content):
         """Verify proc_metrics map update is used."""

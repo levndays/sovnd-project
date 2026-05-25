@@ -34,26 +34,26 @@ class TestEBPFMapValidation:
         assert "max_entries" in maps_content, "Ringbuf max_entries not found"
         assert "256" in maps_content or "256 * 1024" in maps_content, "Ringbuf size not configured"
 
-    def test_proc_metrics_map_exists(self, maps_content):
-        """Verify proc_metrics hash map is defined."""
-        assert "proc_metrics" in maps_content, "proc_metrics map not found"
+    def test_proc_stats_map_exists(self, maps_content):
+        """Verify proc_stats hash map is defined."""
+        assert "proc_stats" in maps_content, "proc_stats map not found"
         assert "BPF_MAP_TYPE_HASH" in maps_content, "Hash map type not found"
 
-    def test_proc_metrics_key_type(self, maps_content):
-        """Verify proc_metrics has correct key type (PID as __u32)."""
+    def test_proc_stats_key_type(self, maps_content):
+        """Verify proc_stats has correct key type (PID as __u32)."""
         assert "__u32" in maps_content, "Key type __u32 not found in maps"
 
-    def test_proc_metrics_value_type(self, maps_content):
-        """Verify proc_metrics has struct proc_stats value type."""
+    def test_proc_stats_value_type(self, maps_content):
+        """Verify proc_stats has struct proc_stats value type."""
         assert "proc_stats" in maps_content, "proc_stats struct reference not found"
 
-    def test_proc_metrics_max_entries(self, maps_content):
-        """Verify proc_metrics has reasonable max_entries."""
-        match = re.search(r'proc_metrics.*?max_entries,\s*(\d+)', maps_content, re.DOTALL)
-        assert match, "proc_metrics max_entries not found"
+    def test_proc_stats_max_entries(self, maps_content):
+        """Verify proc_stats has reasonable max_entries."""
+        match = re.search(r'proc_stats.*?max_entries,\s*(\d+)', maps_content, re.DOTALL)
+        assert match, "proc_stats max_entries not found"
         max_entries = int(match.group(1))
-        assert max_entries > 0, "proc_metrics max_entries should be positive"
-        assert max_entries <= 100000, "proc_metrics max_entries unreasonably large"
+        assert max_entries > 0, "proc_stats max_entries should be positive"
+        assert max_entries <= 100000, "proc_stats max_entries unreasonably large"
 
     def test_container_map_exists(self, maps_content):
         """Verify container_map is defined."""
@@ -68,9 +68,16 @@ class TestEBPFMapValidation:
         sec_markers = maps_content.count("SEC(\".maps\")")
         assert sec_markers >= 6, f"Expected at least 6 SEC(.maps) markers, found {sec_markers}"
 
-    def test_maps_include_vmlinux(self, maps_content):
-        """Verify maps include vmlinux.h."""
-        assert "#include" in maps_content and "vmlinux.h" in maps_content, "vmlinux.h not included"
+    def test_maps_include_vmlinux(self):
+        """Verify vmlinux.h is included by tracer.bpf.c.
+
+        maps.bpf.h relies on kernel types (__u32, __u64) which come
+        from vmlinux.h. The header itself doesn't include vmlinux.h
+        (it's included transitively via tracer.bpf.c before the maps
+        header), so this check targets the .c file.
+        """
+        tracer = (EBPF_DIR / "src" / "tracer.bpf.c").read_text()
+        assert "vmlinux.h" in tracer, "vmlinux.h not included by tracer"
 
     def test_maps_include_bpf_helpers(self, maps_content):
         """Verify maps include bpf helpers."""

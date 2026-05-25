@@ -4,15 +4,22 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent.parent.parent; EBPF_DIR = ROOT_DIR / "drivers" / "ebpf"
 TRACER_FILE = EBPF_DIR / "src" / "tracer.bpf.c"
+MAPS_HEADER = EBPF_DIR / "include" / "maps.bpf.h"
 
 
 class TestEventStructure:
-    """Tests for event structure definition validation."""
+    """Tests for event structure definition validation.
+
+    The ``struct event`` definition lives in ``maps.bpf.h`` (header
+    shared across .bpf.c files); usage sites live in ``tracer.bpf.c``.
+    The fixture concatenates both so each assertion runs against the
+    full eBPF source surface.
+    """
 
     @pytest.fixture
     def tracer_content(self):
-        """Load tracer.bpf.c content."""
-        return TRACER_FILE.read_text()
+        """Load tracer.bpf.c + maps.bpf.h concatenated."""
+        return TRACER_FILE.read_text() + "\n" + MAPS_HEADER.read_text()
 
     def test_event_struct_exists(self, tracer_content):
         """Verify event struct is defined."""
@@ -51,11 +58,15 @@ class TestEventStructure:
         assert re.search(r'char\s+filename\[', tracer_content), "filename field not found in event struct"
 
     def test_event_struct_filename_array_size(self, tracer_content):
-        """Verify filename array is large enough for paths."""
+        """Verify filename array is large enough for typical paths.
+
+        Reduced from 256 to 128 in commit b8f7dcf to fit within the
+        eBPF program stack budget on newer kernels.
+        """
         match = re.search(r'char\s+filename\[(\d+)\]', tracer_content)
         assert match, "filename array size not found"
         size = int(match.group(1))
-        assert size >= 256, "filename array should be at least 256 bytes for paths"
+        assert size >= 128, "filename array should be at least 128 bytes"
 
     def test_event_struct_alignment(self, tracer_content):
         """Verify event struct uses proper types for alignment."""

@@ -59,7 +59,12 @@ class TestStatisticalDetectorEvaluate:
     def test_z_below_threshold_not_anomalous(self):
         engine = MetricsEngine(settings=Settings(ewma_alpha=1.0))
         base = time.time()
-        with patch("time.time", side_effect=[base, base, base + 1.1]):
+        # MetricsEngine.update() calls time.time() once per event (snapshot
+        # check) plus one extra call inside _Profile.__init__ on first ingest.
+        # 11 events → 12 time.time() calls; last one crosses the 1 s
+        # snapshot boundary.
+        times = [base] * 11 + [base + 1.1]
+        with patch("time.time", side_effect=times):
             detector = StatisticalDetector(engine)
             for _ in range(10):
                 engine.update(_make_event(pid=123, op_type=1))

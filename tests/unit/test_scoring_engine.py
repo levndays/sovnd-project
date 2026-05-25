@@ -56,23 +56,23 @@ class TestScoringEngine:
         assert result.pid == 123
 
     def test_compute_signature_critical(self):
-        """Test signature match sets severity to critical."""
+        """Test full-confidence signature match plus heuristics is critical.
+
+        Signature IOC match (type=SIGNATURE_MATCH) contributes 15.0;
+        two unmapped graph heuristics contribute 5.0 each (default weight).
+        Total 25.0 >= critical threshold 22.0.
+        """
         engine = ScoringEngine(settings=Settings(score_threshold=10.0))
         event = {"pid": 123, "comm": "test"}
         stat_report = {"pid": 123, "is_anomalous": False, "max_z_score": 0.0}
-        
-        # We need total score > 20 for critical if using my current logic,
-        # but let's see. My current logic says:
-        # total_score = signature (15) + others.
-        # If I want critical (total > 20), I need more.
-        
+
         result = engine.compute(
             event=event,
             stat_report=stat_report,
-            sig_match={"reason": "shadow file access"}, # 15
-            graph_heuristics=["h1", "h2"] # + 10 = 25
+            sig_match={"type": "SIGNATURE_MATCH", "reason": "shadow file access"},
+            graph_heuristics=["h1", "h2"],
         )
-        
+
         assert result is not None
         assert result.severity == "critical"
 
@@ -134,11 +134,11 @@ class TestScoringEngine:
         result = engine.compute(
             event=event,
             stat_report=stat_report,
-            sig_match={"reason": "unauthorized shell"},
+            sig_match={"type": "SIGNATURE_MATCH", "reason": "unauthorized shell"},
             graph_heuristics=[],
-            container_info=container_info
+            container_info=container_info,
         )
-        
+
         assert result is not None
         assert result.container_info == container_info
 

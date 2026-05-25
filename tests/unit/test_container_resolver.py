@@ -1,366 +1,201 @@
-import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
+import sys
 import threading
+import pytest
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 from internal.container.resolver import ContainerResolver
+
+
+@contextmanager
+def _fake_docker_module(client=None):
+    """Inject a fake ``docker`` module into ``sys.modules`` so the lazy
+    ``import docker`` inside ``ContainerResolver.__init__`` resolves to
+    our mock without touching the real Docker SDK or daemon.
+
+    Yields the mocked ``docker`` module so tests can configure
+    ``from_env`` behavior on it.
+    """
+    real_docker = sys.modules.get("docker")
+    fake = MagicMock(name="docker")
+    if client is not None:
+        fake.from_env.return_value = client
+    sys.modules["docker"] = fake
+    try:
+        yield fake
+    finally:
+        if real_docker is not None:
+            sys.modules["docker"] = real_docker
+        else:
+            sys.modules.pop("docker", None)
+
+
+def _make_resolver_without_docker():
+    """Build a resolver instance with the Docker client forced to None.
+
+    Bypasses ``__init__`` so we don't hit the real Docker daemon during
+    unit tests, but still gets all the attributes ``__init__`` would set.
+    """
+    r = ContainerResolver.__new__(ContainerResolver)
+    r.target_label = None
+    r._cache = {}
+    r._lock = threading.RLock()
+    r._docker = None
+    return r
 
 
 class TestContainerResolverInit:
     """Tests for ContainerResolver initialization."""
 
-    def test_resolver_file_exists(self):
-        """Verify ContainerResolver module exists."""
+    def test_resolver_class_importable(self):
         assert ContainerResolver is not None
 
-    def test_cache_initialized_empty(self):
-        """Verify cache dict is initialized empty."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
+    def test_init_without_docker_does_not_raise(self):
+        """If the Docker SDK cannot connect, init should still succeed
+        and leave ``_docker`` as None."""
+        with _fake_docker_module() as fake:
+            fake.from_env.side_effect = Exception("no daemon")
             resolver = ContainerResolver()
-            assert resolver._cache == {}
+        assert resolver._docker is None
+        assert resolver._cache == {}
 
-    def test_lock_initialized(self):
-        """Verify lock is initialized."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
+    def test_init_with_docker_stores_client(self):
+        """When docker.from_env succeeds, the client is stored on ``_docker``."""
+        fake_client = MagicMock()
+        with _fake_docker_module(client=fake_client):
             resolver = ContainerResolver()
-            assert isinstance(resolver._lock, type(threading.RLock()))
-
-    def test_docker_connection_failure(self):
-        """Verify Docker connection failure handling."""
-        from docker.errors import DockerException
-        
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_docker.side_effect = DockerException("Connection refused")
-            
-            resolver = ContainerResolver()
-            assert resolver.client is None
+        assert resolver._docker is fake_client
 
     def test_cache_initialized_empty(self):
-        """Verify cache dict is initialized empty."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
+        with _fake_docker_module() as fake:
+            fake.from_env.side_effect = Exception("no daemon")
             resolver = ContainerResolver()
-            assert resolver._cache == {}
+        assert resolver._cache == {}
 
-    def test_lock_initialized(self):
-        """Verify lock is initialized."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            assert isinstance(resolver._lock, type(threading.RLock()))
+    def test_lock_is_reentrant(self):
+        resolver = _make_resolver_without_docker()
+        with resolver._lock:
+            with resolver._lock:
+                pass  # would deadlock if not reentrant
 
-    def test_docker_connection_failure(self):
-        """Verify Docker connection failure handling."""
-        from docker.errors import DockerException
-        
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_docker.side_effect = DockerException("Connection refused")
-            
-            resolver = ContainerResolver()
-            assert resolver.client is None
+    def test_target_label_from_env(self):
+        with _fake_docker_module() as fake:
+            fake.from_env.side_effect = Exception("no daemon")
+            resolver = ContainerResolver(target_label="app=web")
+        assert resolver.target_label == "app=web"
 
 
 class TestContainerResolverResolve:
-    """Tests for resolve method."""
+    """Tests for the ``resolve`` method."""
 
-    def test_resolve_handles_edge_cases(self):
-        """Verify resolve handles edge cases gracefully."""
-        resolver = ContainerResolver.__new__(ContainerResolver)
-        resolver._cache = {}
-        resolver.client = None
-        
+    def test_resolve_without_docker_returns_none(self):
+        resolver = _make_resolver_without_docker()
+        assert resolver.resolve(12345) is None
+
+    def test_cache_hit_returns_cached_no_docker_call(self):
+        resolver = _make_resolver_without_docker()
+        resolver._docker = MagicMock()
+        resolver._cache[12345] = {"id": "abc123", "name": "test"}
+
         result = resolver.resolve(12345)
-        
-        assert result is None
 
-    def test_cache_hit_returns_cached(self):
-        """Verify cache hit returns cached value."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            resolver._cache[12345] = {"id": "abc123", "name": "test"}
-            
-            result = resolver.resolve(12345)
-            
-            assert result["id"] == "abc123"
-            mock_client.containers.list.assert_not_called()
+        assert result == {"id": "abc123", "name": "test"}
+        resolver._docker.containers.list.assert_not_called()
 
-    def test_cache_miss_refreshes(self):
-        """Verify cache miss triggers refresh."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "def456"
-            mock_container.name = "web"
-            mock_container.image.tags = ["nginx:latest"]
-            mock_container.labels = {"app": "web"}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver.resolve(99999)
-            
-            mock_client.containers.list.assert_called_once()
+    def test_cache_miss_triggers_docker_lookup(self):
+        resolver = _make_resolver_without_docker()
+        resolver._docker = MagicMock()
+        resolver._docker.containers.list.return_value = []
+
+        resolver.resolve(99999)
+
+        resolver._docker.containers.list.assert_called_once()
+
+    def test_docker_list_exception_returns_none(self):
+        resolver = _make_resolver_without_docker()
+        resolver._docker = MagicMock()
+        resolver._docker.containers.list.side_effect = RuntimeError("boom")
+
+        assert resolver.resolve(12345) is None
 
 
-class TestContainerResolverRefresh:
-    """Tests for _refresh_and_resolve method."""
+class TestExtractCgroupInode:
+    """Tests for the static helper that parses /proc/<pid>/cgroup output."""
 
-    def test_docker_exception_returns_none(self):
-        """Verify Docker exception returns None."""
-        from docker.errors import DockerException
-        
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_client.containers.list.side_effect = DockerException("Error")
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver._refresh_and_resolve(12345)
-            
-            assert result is None
+    def test_extracts_docker_id_from_cgroup_v2(self):
+        container_id = "0123456789abcdef" * 4  # 64 hex chars
+        cgroup_data = f"0::/system.slice/docker-{container_id}.scope\n"
+        result = ContainerResolver._extract_cgroup_inode(cgroup_data)
+        assert result is not None
 
-    def test_updates_cache_on_refresh(self):
-        """Verify cache is updated on refresh."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "xyz789"
-            mock_container.name = "api"
-            mock_container.image.tags = ["api:v1"]
-            mock_container.labels = {}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            resolver._refresh_and_resolve(11111)
-            
-            assert len(resolver._cache) > 0
+    def test_returns_none_for_non_docker(self):
+        cgroup_data = "0::/user.slice/user-1000.slice/session-1.scope\n"
+        assert ContainerResolver._extract_cgroup_inode(cgroup_data) is None
 
-    def test_handles_missing_image_tags(self):
-        """Verify missing image tags handled."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "abc"
-            mock_container.name = "test"
-            mock_container.image.tags = []
-            mock_container.labels = {}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver._refresh_and_resolve(12345)
-            
-            assert result["image"] == "unknown"
-
-    def test_handles_missing_labels(self):
-        """Verify missing labels handled."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "abc"
-            mock_container.name = "test"
-            mock_container.image.tags = ["test:v1"]
-            mock_container.labels = {}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver._refresh_and_resolve(12345)
-            
-            assert "labels" in result
+    def test_returns_none_for_empty(self):
+        assert ContainerResolver._extract_cgroup_inode("") is None
 
 
-class TestContainerResolverClearCache:
-    """Tests for clear_cache method."""
+class TestMatchesLabel:
+    """Tests for the ``_matches_label`` helper."""
 
-    def test_clear_cache_clears_all(self):
-        """Verify clear_cache clears cache."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            resolver._cache[1] = {"id": "a"}
-            resolver._cache[2] = {"id": "b"}
-            
-            resolver.clear_cache()
-            
-            assert resolver._cache == {}
+    def test_no_target_label_matches_everything(self):
+        resolver = _make_resolver_without_docker()
+        container = MagicMock(labels={"any": "thing"})
+        assert resolver._matches_label(container) is True
 
+    def test_key_value_label_matches(self):
+        resolver = _make_resolver_without_docker()
+        resolver.target_label = "app=web"
+        container = MagicMock(labels={"app": "web"})
+        assert resolver._matches_label(container) is True
 
-class TestContainerResolverThreadSafety:
-    """Tests for thread safety."""
+    def test_key_value_label_mismatch(self):
+        resolver = _make_resolver_without_docker()
+        resolver.target_label = "app=web"
+        container = MagicMock(labels={"app": "db"})
+        assert resolver._matches_label(container) is False
 
-    def test_concurrent_resolve_thread_safe(self):
-        """Verify concurrent resolve is thread safe."""
-        import threading
-        
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "abc"
-            mock_container.name = "test"
-            mock_container.image.tags = ["test:latest"]
-            mock_container.labels = {}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            results = []
-            errors = []
-            
-            def worker(cid):
-                try:
-                    r = resolver.resolve(cid)
-                    results.append(r)
-                except Exception as e:
-                    errors.append(e)
-            
-            threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
-            
-            assert len(errors) == 0
+    def test_key_only_label_present(self):
+        resolver = _make_resolver_without_docker()
+        resolver.target_label = "monitored"
+        container = MagicMock(labels={"monitored": ""})
+        assert resolver._matches_label(container) is True
 
-    def test_lock_is_reentrant(self):
-        """Verify lock is reentrant."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            
-            with resolver._lock:
-                with resolver._lock:
-                    pass
-            
-            assert True
+    def test_key_only_label_absent(self):
+        resolver = _make_resolver_without_docker()
+        resolver.target_label = "monitored"
+        container = MagicMock(labels={"other": "x"})
+        assert resolver._matches_label(container) is False
 
 
-class TestContainerResolverEdgeCases:
-    """Edge case tests."""
+class TestClearCache:
+    def test_clear_cache_empties_cache(self):
+        resolver = _make_resolver_without_docker()
+        resolver._cache[1] = {"id": "a"}
+        resolver._cache[2] = {"id": "b"}
 
-    def test_zero_cgroup_id(self):
-        """Verify zero cgroup ID is handled."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            resolver._cache[0] = {"id": "zero"}
-            
-            result = resolver.resolve(0)
-            
-            assert result["id"] == "zero"
+        resolver.clear_cache()
 
-    def test_large_cgroup_id(self):
-        """Verify large cgroup ID is handled."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            
-            result = resolver.resolve(2**63 - 1)
-            
-            assert result is None or result is not None
-
-    def test_empty_container_list(self):
-        """Verify empty container list handled."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_client.containers.list.return_value = []
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver._refresh_and_resolve(12345)
-            
-            assert result is None
+        assert resolver._cache == {}
 
 
-class TestContainerResolverMetadata:
-    """Tests for metadata structure."""
+class TestThreadSafety:
+    def test_concurrent_resolve_no_errors(self):
+        """Many threads calling resolve() concurrently shouldn't raise."""
+        resolver = _make_resolver_without_docker()
+        errors = []
 
-    def test_metadata_has_id(self):
-        """Verify metadata has id field."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "container123"
-            mock_container.name = "myapp"
-            mock_container.image.tags = ["myapp:latest"]
-            mock_container.labels = {"env": "prod"}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver._refresh_and_resolve(12345)
-            
-            assert "id" in result
+        def worker(cid):
+            try:
+                resolver.resolve(cid)
+            except Exception as e:
+                errors.append(e)
 
-    def test_metadata_has_name(self):
-        """Verify metadata has name field."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "container123"
-            mock_container.name = "myapp"
-            mock_container.image.tags = ["myapp:latest"]
-            mock_container.labels = {}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver._refresh_and_resolve(12345)
-            
-            assert "name" in result
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
-    def test_metadata_has_image(self):
-        """Verify metadata has image field."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "container123"
-            mock_container.name = "myapp"
-            mock_container.image.tags = ["nginx:1.21"]
-            mock_container.labels = {}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver._refresh_and_resolve(12345)
-            
-            assert "image" in result
-
-    def test_metadata_has_labels(self):
-        """Verify metadata has labels field."""
-        with patch("internal.container.resolver.docker.DockerClient") as mock_docker:
-            mock_client = MagicMock()
-            mock_container = MagicMock()
-            mock_container.id = "container123"
-            mock_container.name = "myapp"
-            mock_container.image.tags = ["app:v1"]
-            mock_container.labels = {"key": "value"}
-            mock_client.containers.list.return_value = [mock_container]
-            mock_docker.return_value = mock_client
-            
-            resolver = ContainerResolver()
-            result = resolver._refresh_and_resolve(12345)
-            
-            assert "labels" in result
+        assert errors == []

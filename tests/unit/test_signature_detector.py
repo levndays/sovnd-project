@@ -29,7 +29,7 @@ class TestSignatureDetectorInit:
         """Verify suspicious_comm list is initialized."""
         detector = SignatureDetector()
         assert hasattr(detector, "suspicious_comm")
-        assert "bash" in detector.suspicious_comm
+        assert "nc" in detector.suspicious_comm
 
 
 class TestSignatureDetectorCriticalPaths:
@@ -97,25 +97,24 @@ class TestSignatureDetectorCriticalPaths:
 class TestSignatureDetectorSuspiciousComm:
     """Tests for suspicious process detection."""
 
-    def test_bash_process_heuristic(self):
-        """Verify bash process triggers heuristic."""
+    def test_bash_not_flagged(self):
+        """bash/sh were removed from suspicious_comm in commit f268b3a
+        (de-noise) — they are too noisy in real-world workloads."""
         detector = SignatureDetector()
-        
+
         event = {"filename": "/bin/bash", "comm": "bash"}
         result = detector.analyze(event)
-        
-        assert result is not None
-        assert result["type"] == "HEURISTIC_MATCH"
 
-    def test_sh_process_heuristic(self):
-        """Verify sh process triggers heuristic."""
+        assert result is None
+
+    def test_sh_not_flagged(self):
+        """sh removed from suspicious_comm — see test_bash_not_flagged."""
         detector = SignatureDetector()
-        
+
         event = {"filename": "/bin/sh", "comm": "sh"}
         result = detector.analyze(event)
-        
-        assert result is not None
-        assert result["type"] == "HEURISTIC_MATCH"
+
+        assert result is None
 
     def test_nc_process_heuristic(self):
         """Verify nc (netcat) triggers heuristic."""
@@ -136,22 +135,41 @@ class TestSignatureDetectorSuspiciousComm:
         
         assert result is not None
 
-    def test_python_process_heuristic(self):
-        """Verify python process triggers heuristic."""
+    def test_python_not_flagged(self):
+        """python/perl removed from suspicious_comm in commit f268b3a."""
         detector = SignatureDetector()
-        
+
         event = {"filename": "/usr/bin/python3", "comm": "python"}
         result = detector.analyze(event)
-        
-        assert result is not None
 
-    def test_perl_process_heuristic(self):
-        """Verify perl process triggers heuristic."""
+        assert result is None
+
+    def test_perl_not_flagged(self):
+        """perl removed from suspicious_comm — see test_python_not_flagged."""
         detector = SignatureDetector()
-        
+
         event = {"filename": "/usr/bin/perl", "comm": "perl"}
         result = detector.analyze(event)
-        
+
+        assert result is None
+
+    def test_wget_process_heuristic(self):
+        """Verify wget (data exfiltration) triggers heuristic."""
+        detector = SignatureDetector()
+
+        event = {"filename": "/usr/bin/wget", "comm": "wget"}
+        result = detector.analyze(event)
+
+        assert result is not None
+        assert result["severity"] == "warning"
+
+    def test_curl_process_heuristic(self):
+        """Verify curl (data exfiltration) triggers heuristic."""
+        detector = SignatureDetector()
+
+        event = {"filename": "/usr/bin/curl", "comm": "curl"}
+        result = detector.analyze(event)
+
         assert result is not None
 
     def test_non_suspicious_comm_no_heuristic(self):
@@ -249,10 +267,10 @@ class TestSignatureDetectorReturnValues:
     def test_heuristic_match_structure(self):
         """Verify HEURISTIC_MATCH has correct structure."""
         detector = SignatureDetector()
-        
-        event = {"filename": "/bin/bash", "comm": "bash"}
+
+        event = {"filename": "/usr/bin/nc", "comm": "nc"}
         result = detector.analyze(event)
-        
+
         assert "type" in result
         assert "reason" in result
         assert "severity" in result
@@ -333,13 +351,13 @@ class TestSignatureDetectorRealWorld:
         
         assert result is None
 
-    def test_web_server_shell(self):
-        """Verify shell spawning from any process is detected."""
+    def test_exfil_tool_invocation(self):
+        """Verify exfil tool (wget/curl) invocation is flagged."""
         detector = SignatureDetector()
-        
-        event = {"filename": "/bin/bash", "comm": "bash"}
+
+        event = {"filename": "/usr/bin/wget", "comm": "wget"}
         result = detector.analyze(event)
-        
+
         assert result is not None
         assert result["severity"] == "warning"
 

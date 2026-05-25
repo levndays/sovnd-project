@@ -26,6 +26,6 @@ pin:
 
 clean:
 	rm -f *.o tracer.skel.h libloader.so
-	rm -rf $(PIN_DIR)
+	rm -rf $(PIN_DIR) 2>/dev/null || true
 
 .PHONY: all clean pin

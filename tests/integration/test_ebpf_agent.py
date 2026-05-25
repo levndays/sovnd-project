@@ -1,440 +1,248 @@
+"""Tests for drivers/ebpf/bridge.py.
+
+The Python bridge wraps the C loader (``libloader.so``) via ctypes.
+Tests here exercise the public surface without loading the real
+shared library by stubbing the lib path and patching ``ctypes.CDLL``
+where needed.
+"""
+
 import ctypes
-import os
 import queue
 import threading
-from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import pytest
 
-ROOT_DIR = Path(__file__).parent.parent.parent; EBPF_AGENT_FILE = ROOT_DIR / "drivers" / "ebpf" / "bridge.py"
+from drivers.ebpf.bridge import (
+    EBPFAgent,
+    Event,
+    event_to_dict,
+    OP_OPEN,
+    OP_CLOSE,
+    OP_READ,
+    OP_WRITE,
+    FD_TYPE_FILE,
+    FD_TYPE_SOCKET,
+)
 
 
-class TestEBPFAggentModule:
-    """Tests for ebpf_agent.py module structure."""
+ROOT_DIR = Path(__file__).parent.parent.parent
+FAKE_LIB = "/nonexistent/libloader.so"
 
-    def test_ebpf_agent_file_exists(self):
-        """Verify ebpf_agent.py exists."""
-        assert EBPF_AGENT_FILE.exists(), "ebpf_agent.py not found"
+
+# ── Event ctypes layout ──────────────────────────────────────────────
+
+
+class TestEventLayout:
+    """Tests for the ``Event`` ctypes Structure."""
 
     def test_event_class_defined(self):
-        """Verify Event class is defined."""
-        import sys
-        sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-        from drivers.ebpf.bridge import Event
         assert Event is not None
 
     def test_event_class_has_required_fields(self):
-        """Verify Event class has all required fields."""
-        import sys
-        sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-        from drivers.ebpf.bridge import Event
-        
         field_names = [name for name, _ in Event._fields_]
-        required_fields = ["pid", "tgid", "cgroup_id", "syscall_id", "comm", "filename"]
-        for field in required_fields:
-            assert field in field_names, f"Event missing field: {field}"
+        required = ["pid", "tgid", "cgroup_id", "op_type", "fd",
+                    "fd_type", "bytes", "timestamp_ns", "comm", "filename"]
+        for f in required:
+            assert f in field_names, f"Event missing field: {f}"
 
     def test_event_field_types(self):
-        """Verify Event class has correct field types."""
-        import sys
-        sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-        from drivers.ebpf.bridge import Event
-        
-        field_dict = dict(Event._fields_)
-        assert field_dict["pid"] == ctypes.c_uint32
-        assert field_dict["tgid"] == ctypes.c_uint32
-        assert field_dict["cgroup_id"] == ctypes.c_uint64
-        assert field_dict["syscall_id"] == ctypes.c_uint32
+        fields = dict(Event._fields_)
+        assert fields["pid"] == ctypes.c_uint32
+        assert fields["tgid"] == ctypes.c_uint32
+        assert fields["cgroup_id"] == ctypes.c_uint64
+        assert fields["op_type"] == ctypes.c_uint32
+        assert fields["fd"] == ctypes.c_uint32
+        assert fields["fd_type"] == ctypes.c_uint32
+        assert fields["bytes"] == ctypes.c_uint64
 
     def test_event_comm_array_size(self):
-        """Verify comm array is 16 bytes."""
-        import sys
-        sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-        from drivers.ebpf.bridge import Event
-        
-        field_dict = dict(Event._fields_)
-        assert field_dict["comm"] == ctypes.c_char * 16
+        fields = dict(Event._fields_)
+        assert fields["comm"] == ctypes.c_char * 16
 
     def test_event_filename_array_size(self):
-        """Verify filename array is 256 bytes."""
-        import sys
-        sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-        from drivers.ebpf.bridge import Event
-        
-        field_dict = dict(Event._fields_)
-        assert field_dict["filename"] == ctypes.c_char * 256
-
-    def test_event_cb_type_defined(self):
-        """Verify EVENT_CB callback type is defined."""
-        import sys
-        sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-        from drivers.ebpf.bridge import EVENT_CB
-        assert EVENT_CB is not None
-
-    def test_ebpf_agent_class_defined(self):
-        """Verify EBPFAgent class is defined."""
-        import sys
-        sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-        from drivers.ebpf.bridge import EBPFAgent
-        assert EBPFAgent is not None
+        """filename was shrunk to 128 bytes (commit b8f7dcf) to fit
+        the eBPF program stack budget."""
+        fields = dict(Event._fields_)
+        assert fields["filename"] == ctypes.c_char * 128
 
 
-class TestEBPFAggentInit:
-    """Tests for EBPFAgent initialization."""
+class TestEventToDict:
+    """Tests for the ``event_to_dict`` serializer."""
 
-    @pytest.fixture
-    def mock_cdll(self):
-        """Mock ctypes.CDLL."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock:
-            mock_lib = MagicMock()
-            mock.return_value = mock_lib
-            yield mock_lib
+    def _make_event(self, **overrides):
+        e = Event()
+        e.pid = overrides.get("pid", 100)
+        e.tgid = overrides.get("tgid", 100)
+        e.cgroup_id = overrides.get("cgroup_id", 0)
+        e.op_type = overrides.get("op_type", OP_OPEN)
+        e.fd = overrides.get("fd", 3)
+        e.fd_type = overrides.get("fd_type", FD_TYPE_FILE)
+        e.bytes = overrides.get("bytes", 0)
+        e.timestamp_ns = overrides.get("timestamp_ns", 0)
+        e.comm = overrides.get("comm", b"testproc")
+        e.filename = overrides.get("filename", b"/tmp/x")
+        return e
 
-    def test_init_loads_library(self):
-        """Verify __init__ loads the shared library."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent(lib_path="/fake/path/libloader.so")
-            mock_cdll.assert_called_once()
+    def test_returns_dict_with_all_fields(self):
+        d = event_to_dict(self._make_event())
+        for key in ("pid", "tgid", "cgroup_id", "op_type", "op_name",
+                    "fd", "fd_type", "fd_type_name", "bytes",
+                    "timestamp_ns", "comm", "filename"):
+            assert key in d
 
-    def test_init_sets_argtypes_for_start_loader(self):
-        """Verify start_loader argtypes are set."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent, EVENT_CB
-            
-            agent = EBPFAgent()
-            assert mock_lib.start_loader.argtypes is not None
+    def test_decodes_comm_as_utf8_string(self):
+        d = event_to_dict(self._make_event(comm=b"nginx"))
+        assert isinstance(d["comm"], str)
+        assert d["comm"] == "nginx"
 
-    def test_init_sets_restype_for_start_loader(self):
-        """Verify start_loader restype is set to int."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            assert mock_lib.start_loader.restype == ctypes.c_int
+    def test_maps_op_type_to_op_name(self):
+        for op, name in [(OP_OPEN, "open"), (OP_CLOSE, "close"),
+                         (OP_READ, "read"), (OP_WRITE, "write")]:
+            d = event_to_dict(self._make_event(op_type=op))
+            assert d["op_name"] == name
 
-    def test_init_sets_argtypes_for_poll_events(self):
-        """Verify poll_events argtypes are set."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            assert mock_lib.poll_events.argtypes is not None
+    def test_maps_fd_type_to_name(self):
+        d = event_to_dict(self._make_event(fd_type=FD_TYPE_SOCKET))
+        assert d["fd_type_name"] == "socket"
+
+
+# ── EBPFAgent ────────────────────────────────────────────────────────
+
+
+class TestEBPFAgentInit:
+    """Init does not touch the shared library — the .so is loaded
+    lazily inside ``start()`` so unit tests can construct an agent
+    without any real eBPF dependency."""
+
+    def test_init_accepts_lib_path(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        assert agent.lib_path == Path(FAKE_LIB)
+
+    def test_init_does_not_load_library(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        assert agent.lib is None
 
     def test_init_creates_event_queue(self):
-        """Verify __init__ creates an event queue."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            assert hasattr(agent, "event_queue")
-            assert isinstance(agent.event_queue, queue.Queue)
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        assert isinstance(agent._event_queue, queue.Queue)
 
-    def test_init_sets_running_false(self):
-        """Verify __init__ sets running to False."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            assert agent.running is False
+    def test_init_sets_polling_false(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        assert agent._polling is False
 
-    def test_init_sets_thread_none(self):
-        """Verify __init__ sets thread to None."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            assert agent.thread is None
+    def test_init_sets_poll_thread_none(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        assert agent._poll_thread is None
 
 
-class TestEBPFAggentStart:
-    """Tests for EBPFAgent.start() method."""
+class TestEBPFAgentStart:
 
-    def test_start_calls_start_loader(self):
-        """Verify start() calls start_loader from library."""
+    def test_start_raises_if_library_missing(self):
+        agent = EBPFAgent(lib_path="/definitely/not/here.so")
+        with pytest.raises(FileNotFoundError):
+            agent.start()
+
+    def test_start_calls_start_loader(self, tmp_path):
+        # Create a placeholder file so the existence check passes;
+        # CDLL is patched so the file is never actually dlopened.
+        fake_so = tmp_path / "libloader.so"
+        fake_so.write_bytes(b"")
+        agent = EBPFAgent(lib_path=str(fake_so))
+
         with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
             mock_lib = MagicMock()
             mock_lib.start_loader.return_value = 0
             mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
             agent.start()
             mock_lib.start_loader.assert_called_once()
+        agent.stop()
 
-    def test_start_raises_on_loader_error(self):
-        """Verify start() raises RuntimeError when loader fails."""
+    def test_start_raises_on_loader_error(self, tmp_path):
+        fake_so = tmp_path / "libloader.so"
+        fake_so.write_bytes(b"")
+        agent = EBPFAgent(lib_path=str(fake_so))
+
         with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
             mock_lib = MagicMock()
             mock_lib.start_loader.return_value = 1
             mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            with pytest.raises(RuntimeError) as exc_info:
+            with pytest.raises(RuntimeError) as exc:
                 agent.start()
-            assert "Failed to start eBPF loader" in str(exc_info.value)
+            assert "Failed to start eBPF loader" in str(exc.value)
 
-    def test_start_sets_running_true(self):
-        """Verify start() sets running to True."""
+    def test_start_sets_polling_true(self, tmp_path):
+        fake_so = tmp_path / "libloader.so"
+        fake_so.write_bytes(b"")
+        agent = EBPFAgent(lib_path=str(fake_so))
+
         with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
             mock_lib = MagicMock()
             mock_lib.start_loader.return_value = 0
             mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
             agent.start()
-            assert agent.running is True
-
-    def test_start_creates_thread(self):
-        """Verify start() creates a thread."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            with patch("drivers.ebpf.bridge.threading.Thread") as mock_thread:
-                mock_lib = MagicMock()
-                mock_lib.start_loader.return_value = 0
-                mock_cdll.return_value = mock_lib
-                
-                import sys
-                sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-                from drivers.ebpf.bridge import EBPFAgent
-                
-                agent = EBPFAgent()
-                agent.start()
-                mock_thread.assert_called_once()
+            assert agent._polling is True
+        agent.stop()
 
 
-class TestEBPFAggentStop:
-    """Tests for EBPFAgent.stop() method."""
+class TestEBPFAgentStop:
 
-    def test_stop_sets_running_false(self):
-        """Verify stop() sets running to False."""
+    def test_stop_clears_polling(self, tmp_path):
+        fake_so = tmp_path / "libloader.so"
+        fake_so.write_bytes(b"")
+        agent = EBPFAgent(lib_path=str(fake_so))
+
         with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
             mock_lib = MagicMock()
             mock_lib.start_loader.return_value = 0
             mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            agent.running = True
-            agent.thread = MagicMock()
+            agent.start()
             agent.stop()
-            assert agent.running is False
-
-    def test_stop_calls_stop_loader(self):
-        """Verify stop() calls stop_loader from library."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            agent.thread = MagicMock()
-            agent.stop()
+            assert agent._polling is False
             mock_lib.stop_loader.assert_called_once()
 
-    def test_stop_joins_thread_if_exists(self):
-        """Verify stop() joins thread if it exists."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            mock_thread = MagicMock()
-            agent.thread = mock_thread
-            agent.stop()
-            mock_thread.join.assert_called_once()
+    def test_stop_without_start_is_safe(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        agent.stop()  # should not raise
 
 
-class TestEBPFAggentGetEvent:
-    """Tests for EBPFAgent.get_event() method."""
-
-    def test_get_event_returns_event(self):
-        """Verify get_event returns event from queue."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            test_event = {"pid": 123, "comm": "test"}
-            agent.event_queue.put(test_event)
-            
-            result = agent.get_event(block=False)
-            assert result == test_event
+class TestEBPFAgentGetEvent:
 
     def test_get_event_returns_none_on_empty(self):
-        """Verify get_event returns None when queue is empty."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            result = agent.get_event(block=False)
-            assert result is None
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        assert agent.get_event(timeout=0.05) is None
+
+    def test_get_event_drains_queue(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        e = Event()
+        e.pid = 4242
+        e.comm = b"alpha"
+        e.filename = b"/etc/x"
+        agent._event_queue.put(e)
+        result = agent.get_event(timeout=0.05)
+        assert result is not None
+        assert result["pid"] == 4242
+        assert result["comm"] == "alpha"
 
 
-class TestEBPFAggentEventHandler:
-    """Tests for EBPFAgent._event_handler() method."""
+class TestEBPFAgentCallback:
+    """The C library invokes ``_c_callback(ctx, data, size)``; data is
+    a void* pointing at an ``Event``. The callback copies the event
+    into the queue without blocking."""
 
-    def test_event_handler_puts_to_queue(self):
-        """Verify _event_handler puts event to queue."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            
-            mock_event = MagicMock()
-            mock_event.pid = 123
-            mock_event.tgid = 456
-            mock_event.cgroup_id = 789
-            mock_event.syscall_id = 257
-            mock_event.comm = b"testproc"
-            mock_event.filename = b"/tmp/test"
-            
-            mock_ptr = MagicMock()
-            mock_ptr.contents = mock_event
-            
-            agent._event_handler(None, mock_ptr, 100)
-            
-            assert not agent.event_queue.empty()
-            event = agent.event_queue.get_nowait()
-            assert event["pid"] == 123
-            assert event["tgid"] == 456
+    def test_callback_drops_undersized_events(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        # Pretend the buffer is smaller than an Event; should be ignored.
+        agent._c_callback(None, ctypes.c_void_p(0), 4)
+        assert agent._event_queue.empty()
 
-    def test_event_handler_decodes_comm_utf8(self):
-        """Verify _event_handler decodes comm as UTF-8."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            
-            mock_event = MagicMock()
-            mock_event.pid = 123
-            mock_event.tgid = 456
-            mock_event.cgroup_id = 789
-            mock_event.syscall_id = 257
-            mock_event.comm = b"test"
-            mock_event.filename = b"/tmp/test"
-            
-            mock_ptr = MagicMock()
-            mock_ptr.contents = mock_event
-            
-            agent._event_handler(None, mock_ptr, 100)
-            
-            event = agent.event_queue.get_nowait()
-            assert isinstance(event["comm"], str)
-
-
-class TestEBPFAggentPollLoop:
-    """Tests for EBPFAgent._poll_loop() method."""
-
-    @pytest.mark.skip(reason="time module imported locally in __main__, difficult to mock properly")
-    def test_poll_loop_calls_poll_events(self):
-        """Verify _poll_loop calls poll_events."""
-        pass
-
-
-class TestEBPFAggentEdgeCases:
-    """Tests for edge cases in EBPFAgent."""
-
-    def test_get_event_with_timeout(self):
-        """Verify get_event works with timeout parameter."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            result = agent.get_event(block=True, timeout=0.1)
-            assert result is None
-
-    def test_stop_with_no_thread(self):
-        """Verify stop() handles None thread gracefully."""
-        with patch("drivers.ebpf.bridge.ctypes.CDLL") as mock_cdll:
-            mock_lib = MagicMock()
-            mock_cdll.return_value = mock_lib
-            
-            import sys
-            sys.path.insert(0, str(EBPF_AGENT_FILE.parent))
-            from drivers.ebpf.bridge import EBPFAgent
-            
-            agent = EBPFAgent()
-            agent.thread = None
-            agent.stop()
-            mock_lib.stop_loader.assert_called_once()
+    def test_callback_pushes_valid_event(self):
+        agent = EBPFAgent(lib_path=FAKE_LIB)
+        e = Event()
+        e.pid = 777
+        ptr = ctypes.cast(ctypes.pointer(e), ctypes.c_void_p)
+        agent._c_callback(None, ptr, ctypes.sizeof(Event))
+        assert not agent._event_queue.empty()
+        got = agent._event_queue.get_nowait()
+        assert got.pid == 777

@@ -27,13 +27,14 @@ class TestAPIEndpoints:
     """Tests for API endpoints."""
 
     def test_root_endpoint(self, temp_db):
-        """Test root endpoint returns welcome message."""
+        """The ``/`` route serves the dashboard HTML; ``/api`` is the
+        JSON discovery endpoint that returns the welcome message."""
         manager, _ = temp_db
         app.dependency_overrides[get_storage] = lambda: manager
         try:
             client = TestClient(app)
-            response = client.get("/")
-            
+            response = client.get("/api")
+
             assert response.status_code == 200
             data = response.json()
             assert "message" in data
